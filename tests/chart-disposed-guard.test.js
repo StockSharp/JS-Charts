@@ -138,64 +138,71 @@ const LINE = [
 
 const CLEAR = 'clearRect(0, 0, 800, 400)';
 
+describe('every public method rejects use after chart.remove()', () => {
+    it('rejects work aimed at a disposed chart instead of silently accepting it', () => {
+        dom = createHeadlessDom();
+        const chart = createChart(dom.host, { width: 800, height: 400 });
+        chart.addSeries(LineSeries).setData(LINE);
+        chart.remove();
 
-describe('AUDIT 3.6 — ChartLegend must be detachable', () => {
-    it('releases its DOM listeners, its crosshair subscription and the engine hook it wrapped', () => {
-        const { element, chart, crosshairHandlers, engine, originalOnChange } = legendFixture();
+        const probes = {
+            addSeries: () => chart.addSeries(LineSeries),
+            addPane: () => chart.addPane({ height: 100 }),
+            applyOptions: () => chart.applyOptions({ layout: { background: { color: '#000' } } }),
+            resize: () => chart.resize(640, 320),
+            fitContent: () => chart.timeScale().fitContent(),
+            subscribeClick: () => chart.subscribeClick(() => { }),
+            subscribeCrosshairMove: () => chart.subscribeCrosshairMove(() => { }),
+            panes: () => chart.panes(),
+            // Control: this one is already guarded, and its wording is the contract the rest owe.
+            attachPrimitive: () => chart.attachPrimitive(explodingPrimitive('unused')),
+        };
 
-        const legend = new ChartLegend();
-        legend.init('chartLegend', chart);
-        legend.setIndicatorEngine(engine);
+        const seen = {};
+        for (const [name, probe] of Object.entries(probes)) {
+            try {
+                probe();
+                seen[name] = 'accepted silently';
+            } catch (error) {
+                seen[name] = /disposed/.test(error.message)
+                    ? 'rejected: disposed'
+                    : `rejected with an unrelated error: ${error.message}`;
+            }
+        }
 
-        assert.equal(crosshairHandlers.length, 1, 'sanity: init() subscribed to crosshair moves');
-        assert.notEqual(engine.onChange, originalOnChange, 'sanity: setIndicatorEngine wrapped onChange');
-
-        const teardown = typeof legend.dispose === 'function' ? 'dispose()'
-            : typeof legend.destroy === 'function' ? 'destroy()'
-            : 'none';
-        if (teardown === 'dispose()') legend.dispose();
-        else if (teardown === 'destroy()') legend.destroy();
-
-        const domListeners = ['mouseenter', 'mouseleave', 'click']
-            .reduce((total, type) => total + element.listenerCount(type), 0);
-
-        assert.deepStrictEqual(
-            {
-                teardown,
-                domListeners,
-                crosshairSubscriptions: crosshairHandlers.length,
-                engineHookRestored: engine.onChange === originalOnChange,
-            },
-            {
-                teardown: 'dispose()',
-                domListeners: 0,
-                crosshairSubscriptions: 0,
-                engineHookRestored: true,
-            },
-            'a host that rebuilds its chart on every symbol/timeframe change must be able to detach '
-            + 'the legend cleanly: without a teardown the DOM listeners, the crosshair subscription '
-            + 'and the irreversible engine.onChange wrapper all outlive the legend',
-        );
+        const owed = Object.fromEntries(Object.keys(probes).map((name) => [name, 'rejected: disposed']));
+        assert.deepStrictEqual(seen, owed,
+            'after remove() the chart is dead: every public entry point owes the caller the same '
+            + 'explicit "chart is disposed" error that attachPrimitive already gives, rather than '
+            + 'quietly doing work on a dead object or throwing an internal pane-lookup error');
     });
 });
 
 // ---------------------------------------------------------------------------
-// 3.7 — window._chartPaneManager
+// 3.6 — ChartLegend teardown
 // ---------------------------------------------------------------------------
 
-function paneManagerFixture(containerId) {
-    const container = dom.document.createElement('div');
-    container.insertBefore = (node) => container.appendChild(node);
-    const chartElement = dom.document.createElement('div');
-    container.appendChild(chartElement);
+function legendFixture() {
+    dom = createHeadlessDom();
+    const element = dom.document.createElement('div');
+    dom.document.getElementById = (id) => (id === 'chartLegend' ? element : null);
 
-    const previousGetElementById = dom.document.getElementById;
-    dom.document.getElementById = (id) => (id === containerId
-        ? chartElement
-        : (previousGetElementById === undefined ? null : previousGetElementById(id)));
+    const crosshairHandlers = [];
+    const chart = {
+        subscribeCrosshairMove(handler) { crosshairHandlers.push(handler); },
+        unsubscribeCrosshairMove(handler) {
+            const at = crosshairHandlers.indexOf(handler);
+            if (at >= 0) crosshairHandlers.splice(at, 1);
+        },
+        clearCrosshairPosition() { },
+    };
 
-    const manager = new ChartPaneManager(containerId);
-    manager.init({ addPane: () => { throw new Error('no pane is added by this test'); } });
-    return manager;
+    const originalOnChange = () => { };
+    const engine = {
+        onChange: originalOnChange,
+        getIndicators: () => [],
+        getValuesAt: () => [],
+        remove() { },
+    };
+    return { element, chart, crosshairHandlers, engine, originalOnChange };
 }
-

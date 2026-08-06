@@ -1389,6 +1389,7 @@ class ChartImpl implements IChartApi {
 
     // ---- public-ish (IChartApi) -------------------------------------
     addPane(options: PaneOptions = {}): PaneApi {
+        this.assertAlive();
         const model = this.model.addPane(options);
         const api = new PaneApi(this, model);
         this.paneApis.set(model.id, api);
@@ -1398,6 +1399,7 @@ class ChartImpl implements IChartApi {
         return api;
     }
     panes(): readonly PaneApi[] {
+        this.assertAlive();
         return this.model.panes.map((pane) => this.paneApiFor(pane));
     }
     removePane(pane: IPaneApi): void {
@@ -1430,6 +1432,7 @@ class ChartImpl implements IChartApi {
         pane?: IPaneApi,
     ): ISeriesApi<TData, TOptions>;
     addSeries(def: SeriesDefinition<any, any>, options: SeriesOptions = {}, pane?: IPaneApi): Series {
+        this.assertAlive();
         const target = pane === undefined ? this.model.mainPane : this.resolvePane(pane);
         const resolved = seriesRendererRegistry.resolve(def) as CustomSeriesDefinition<AnyPoint, SeriesOptions>;
         const s = new Series(resolved, { ...resolved.defaultOptions, ...options });
@@ -1575,8 +1578,17 @@ class ChartImpl implements IChartApi {
         }
         return primitive;
     }
-    attachPrimitive(primitive: IChartPrimitive, options: PrimitiveAttachOptions = {}): void {
+    /**
+     * One error for every entry point after remove(). Only attachPrimitive checked, so the rest
+     * quietly did work on a dead object -- adding series and panes, resizing, subscribing -- while
+     * panes() surfaced an internal "pane 'main' is not available" that says nothing about why.
+     */
+    private assertAlive(): void {
         if (this.disposed) throw new Error('sschart: chart is disposed');
+    }
+
+    attachPrimitive(primitive: IChartPrimitive, options: PrimitiveAttachOptions = {}): void {
+        this.assertAlive();
         const series = options.series === undefined ? null : this.resolveSeries(options.series);
         const explicitPane = options.pane === undefined ? null : this.resolvePane(options.pane);
         if (series !== null && explicitPane !== null && series.pane !== explicitPane)
@@ -1784,7 +1796,7 @@ class ChartImpl implements IChartApi {
         (pane ?? this.model.mainPane).priceScale(scaleId).setMode(mode);
         this.scheduleDraw();
     }
-    subscribeClick(cb: ClickListener): void { this.clickListeners.push(cb); }
+    subscribeClick(cb: ClickListener): void { this.assertAlive(); this.clickListeners.push(cb); }
     unsubscribeClick(cb: ClickListener): void { this.clickListeners = this.clickListeners.filter((x) => x !== cb); }
 
     // Enable order-placement mode: while `modifier` (ctrl/shift/alt) is held over the plot the chart
@@ -1853,7 +1865,7 @@ class ChartImpl implements IChartApi {
         this.placementLine = null;
         if (this.canvas.style.cursor === 'crosshair') this.canvas.style.cursor = '';
     }
-    subscribeCrosshairMove(cb: CrosshairListener): void { this.crosshairListeners.push(cb); }
+    subscribeCrosshairMove(cb: CrosshairListener): void { this.assertAlive(); this.crosshairListeners.push(cb); }
     unsubscribeCrosshairMove(cb: CrosshairListener): void {
         this.crosshairListeners = this.crosshairListeners.filter((x) => x !== cb);
     }
@@ -1896,6 +1908,7 @@ class ChartImpl implements IChartApi {
     }
     options(): Readonly<ChartOptions> { return cloneChartOptions(this.opts); }
     applyOptions(patch: ChartOptions): void {
+        this.assertAlive();
         const timeScale = patch.timeScale === undefined
             ? undefined
             : normalizeTimeScaleOptions({ ...this.opts.timeScale, ...patch.timeScale });
@@ -1934,6 +1947,7 @@ class ChartImpl implements IChartApi {
         this.scheduleDraw(RenderDirty.All);
     }
     resize(width: number, height: number): void {
+        this.assertAlive();
         if (width < 2 || height < 2) return;
         this.applySize(width, height);
         this.scheduleDraw(RenderDirty.Layout);
@@ -2080,6 +2094,7 @@ class ChartImpl implements IChartApi {
     }
 
     fitContent(): void {
+        this.assertAlive();
         this.model.timeScale.fitContent();
         for (const pane of this.model.panes) pane.priceZoom = 1;
         this.emitRange();
