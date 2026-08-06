@@ -473,12 +473,30 @@ export class TradingCalendar implements ITradingCalendar {
             })
             .sort((left, right) => left - right);
         if (candidates.length === 0) {
-            throw new RangeError(
-                `sschart: ${formatLocalDate(value)} ${pad(value.hour)}:${pad(value.minute)}:${pad(value.second)}`
-                + ` does not exist in ${this.scheduleValue.timeZone}`,
-            );
+            // The local time falls in a spring-forward gap: it never happens on that date. The
+            // ambiguous autumn case already has a policy (earlier/later) and this one had none, so
+            // a legitimate schedule -- 24x7 in a zone whose DST change is at midnight, such as
+            // America/Havana -- threw out of every public query whose scan window touched the date.
+            // Clamp to the first instant that does exist, the standard "compatible" resolution:
+            // the session starts when the clock jumps.
+            return this.firstInstantAfterGap(value);
         }
         return disambiguation === 'earlier' ? candidates[0] : candidates[candidates.length - 1];
+    }
+
+    /**
+     * Walks forward from the wanted local time to the first instant that maps back to a real local
+     * time at or after it. Bounded by the largest gap any zone has ever used.
+     */
+    private firstInstantAfterGap(value: LocalDateTimeParts): Time {
+        const wanted = localEpoch(value);
+        const offsets = this.offsetsForDate(value);
+        const earliest = Math.min(...offsets.map((offset) => wanted - offset));
+        for (let candidate = earliest; candidate <= earliest + 4 * 3_600; candidate += 60) {
+            const actual = this.localParts(candidate);
+            if (localEpoch(actual) >= wanted) return candidate;
+        }
+        return earliest;
     }
 
     private offsetsForDate(value: LocalDateParts): readonly number[] {
