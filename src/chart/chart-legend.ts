@@ -76,6 +76,7 @@ export class ChartLegend {
     _onCrosshair: ((param: LegendCrosshairParam) => void) | null = null;
     _engineHook: { previous: (() => void) | null; wrapper: () => void } | null = null;
     _lastIndSignature: string | undefined;
+    _ohlcvShape: string | undefined;
     _lastSubPaneIds: Set<string | null> | undefined;
     onEditIndicator: ((id: number, type: string) => void) | null = null;
     onChartTypeChange: ((type: string) => void) | null = null;
@@ -346,23 +347,6 @@ export class ChartLegend {
         const prec = precFor(refPrice);
         const fmt = (v: number | null | undefined) => v !== undefined && v !== null ? v.toFixed(prec) : '--';
 
-        let html = `<span class="legend-item legend-time">${this._formatTime(candle.time)}</span>`;
-        html += `<span class="legend-item">O <span class="${cls}">${fmt(candle.open)}</span></span>`;
-        html += `<span class="legend-item">H <span class="${cls}">${fmt(candle.high)}</span></span>`;
-        html += `<span class="legend-item">L <span class="${cls}">${fmt(candle.low)}</span></span>`;
-        html += `<span class="legend-item">C <span class="${cls}">${fmt(candle.close)}</span></span>`;
-        if (candle.volume !== undefined) {
-            html += `<span class="legend-item">V <span class="legend-vol">${this._formatVol(candle.volume)}</span></span>`;
-        }
-        // Per-pane chart-type selector. Mini-dropdown right at the end of the
-        // OHLC strip so the user can change rendering (candle/bar/line/area/
-        // heikin) for THIS particular chart pane without touching the global
-        // toolbar — необходимо для multi-chart layout.
-        // Per-pane chart-type selector. ТОЛЬКО toggle-кнопка в HTML
-        // легенды — само меню создаётся в document.body при клике
-        // (см. click handler в init). Без этого _renderOHLCV пересоздавал
-        // legend HTML на каждый tick и menu, открытое юзером, мгновенно
-        // выкидывалось из DOM.
         const CT_ICONS: Record<string, string> = {
             candle: 'bi-bar-chart-fill',
             bar: 'bi-bar-chart-steps',
@@ -375,15 +359,59 @@ export class ChartLegend {
             box: 'bi-grid-3x3-gap-fill',
         };
         const ct = this._currentChartType || 'candle';
-        html += `<span class="legend-item legend-ct"><button class="legend-ct-toggle btn-toolbar" title="${T.t('Chart')}" type="button" data-current="${ct}"><i class="bi ${CT_ICONS[ct] || 'bi-bar-chart-fill'}"></i><i class="bi bi-caret-down-fill" style="font-size:8px;margin-left:3px;"></i></button></span>`;
+        const hasVolume = candle.volume !== undefined;
+        // The strip is built once and written into afterwards. A live feed refreshes the legend
+        // several times a second, and rewriting the row's HTML each time destroys the chart-type
+        // toggle -- the mousedown lands on one node and the mouseup on its replacement, so the
+        // click never happens. That is the same failure the indicator rows below are careful
+        // about, and the hover freeze does not help here: it only gates _renderIndicators.
+        const shape = hasVolume ? 'ohlcv' : 'ohlc';
+        let strip = this._el.querySelector('.legend-ohlcv') as HTMLElement | null;
+        if (strip === null || this._ohlcvShape !== shape) {
+            let html = '<span class="legend-item legend-time" data-ohlc="time"></span>';
+            for (const key of ['o', 'h', 'l', 'c']) {
+                html += `<span class="legend-item">${key.toUpperCase()} `
+                    + `<span data-ohlc="${key}"></span></span>`;
+            }
+            if (hasVolume)
+                html += '<span class="legend-item">V <span class="legend-vol" data-ohlc="v"></span></span>';
+            // Per-pane chart-type selector: only the toggle button lives in the legend, the menu
+            // itself is built in document.body on click, or a refresh would throw away a menu the
+            // user has open.
+            html += '<span class="legend-item legend-ct"><button class="legend-ct-toggle btn-toolbar"'
+                + ' type="button"><i class="bi"></i>'
+                + '<i class="bi bi-caret-down-fill" style="font-size:8px;margin-left:3px;"></i>'
+                + '</button></span>';
+            if (this._el.querySelector('.legend-indicators') !== null && strip !== null) {
+                strip.innerHTML = html;
+            } else {
+                this._el.innerHTML = `<span class="legend-ohlcv">${html}</span>`
+                    + '<span class="legend-indicators"></span>';
+                strip = this._el.querySelector('.legend-ohlcv') as HTMLElement | null;
+            }
+            this._ohlcvShape = shape;
+        }
+        if (strip === null) return;
 
-        // Indicator values
-        const indHtml = this._el.querySelector('.legend-indicators');
-        if (indHtml) {
-            const ohlcv = this._el.querySelector('.legend-ohlcv');
-            if (ohlcv) ohlcv.innerHTML = html;
-        } else {
-            this._el.innerHTML = `<span class="legend-ohlcv">${html}</span><span class="legend-indicators"></span>`;
+        const write = (key: string, text: string, coloured: boolean) => {
+            const el = strip.querySelector(`[data-ohlc="${key}"]`) as HTMLElement | null;
+            if (el === null) return;
+            el.textContent = text;
+            if (coloured) el.className = cls;
+        };
+        write('time', this._formatTime(candle.time), false);
+        write('o', fmt(candle.open), true);
+        write('h', fmt(candle.high), true);
+        write('l', fmt(candle.low), true);
+        write('c', fmt(candle.close), true);
+        if (hasVolume) write('v', this._formatVol(candle.volume as number), false);
+
+        const toggle = strip.querySelector('.legend-ct-toggle') as HTMLElement | null;
+        if (toggle !== null) {
+            toggle.title = T.t('Chart');
+            toggle.dataset.current = ct;
+            const icon = toggle.querySelector('i') as HTMLElement | null;
+            if (icon !== null) icon.className = `bi ${CT_ICONS[ct] || 'bi-bar-chart-fill'}`;
         }
     }
 

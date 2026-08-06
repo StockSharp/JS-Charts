@@ -416,3 +416,35 @@ describe('legend refresh and indicator colours', () => {
         );
     });
 });
+
+describe('legend refresh under the cursor', () => {
+    it('keeps the chart-type toggle node alive across a live refresh under the cursor', () => {
+        const legend = mountLegend([bar(1700000000, 100)]);
+        legend.refresh();
+
+        const ohlcv = legend._el.querySelector('.legend-ohlcv');
+        const toggle = legend._el.querySelector('.legend-ct-toggle');
+        assert.ok(toggle, 'the OHLCV strip must carry the chart-type toggle');
+
+        legend._el.dispatchEvent({ type: 'mouseenter', target: legend._el });
+        assert.equal(legend._isHovered, true, 'the cursor is over the legend — hover freeze is on');
+
+        // The terminal refreshes the legend every 350 ms off the live feed. The user is aiming at
+        // the toggle: mousedown lands on the node below, mouseup on whatever exists 350 ms later.
+        legend.setRawCandles([bar(1700000060, 101)]);
+        legend.refresh();
+
+        // Control: node identity is preserved by this harness wherever the code preserves it —
+        // the .legend-ohlcv container survives the same refresh untouched.
+        assert.ok(legend._el.querySelector('.legend-ohlcv') === ohlcv,
+            'control: the container node is the same object after the refresh');
+
+        const after = legend._el.querySelector('.legend-ct-toggle');
+        assert.ok(
+            after === toggle,
+            'the chart-type toggle must survive a live refresh: _renderOHLCV rewrites the whole '
+            + '.legend-ohlcv innerHTML — including the toggle — so a click straddling the refresh is '
+            + 'silently dropped, the exact failure the file guards against for indicator rows',
+        );
+    });
+});
