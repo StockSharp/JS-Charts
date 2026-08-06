@@ -330,4 +330,115 @@ describe('ChartNavigator', () => {
         navigator.dispose();
         assert.throws(() => navigator.snapshot(), /disposed/);
     });
+
+    // A cancelled navigation still owes the overview rebuild that was deferred while it ran:
+    // refreshData only marks the samples dirty whenever a navigation is in flight. The doubles
+    // below deliver the change and its data in a single snapshot and then go quiet -- a static or
+    // custom controller, not the built-in one whose next emit would launder the stale overview.
+    function overviewReport(navigator) {
+        const state = navigator.snapshot();
+        return {
+            boundsFrom: state.bounds.from,
+            firstSampleFrom: state.samples[0].from,
+            boundsCount: state.bounds.count,
+            sampledBars: state.samples.reduce((total, sample) => total + sample.count, 0),
+        };
+    }
+
+    function quietData(initialBars, loadMoreBefore) {
+        let bars = [...initialBars];
+        let state = snapshot({
+            loadedBars: bars.length, renderedBars: bars.length, hasMoreBefore: true,
+        });
+        const listeners = new Set();
+        const publish = patch => {
+            state = snapshot({ ...state, ...patch });
+            for (const listener of listeners) listener(state);
+        };
+        const context = {
+            replaceBars(next) { bars = [...next]; },
+            prependBars(next) { bars = [...next, ...bars]; },
+            barCount: () => bars.length,
+            publish,
+        };
+        return {
+            data: {
+                snapshot: () => state,
+                rawDataSlice: (from = 0, to = bars.length) => Object.freeze(bars.slice(from, to)),
+                loadMoreBefore: () => loadMoreBefore(context),
+                subscribe(listener) { listeners.add(listener); },
+                unsubscribe(listener) { listeners.delete(listener); },
+            },
+            context,
+        };
+    }
+
+    it('resamples when a symbol switch cancels a navigation', async () => {
+        let finishLoad = null;
+        const { data, context } = quietData(
+            Array.from({ length: 20 }, (_, index) => candle(1_000 + index * 60, 100 + index)),
+            () => new Promise(resolve => { finishLoad = resolve; }),
+        );
+        const chart = chartDouble({ from: 1_000, to: 2_140 });
+        const navigator = new ChartNavigator({ chart: chart.chart, data, maxPoints: 40 });
+        assert.equal(navigator.snapshot().samples.at(-1).close, 119);
+
+        const navigation = navigator.setRange({ from: 0, to: 2_140 });
+        assert.equal(navigator.snapshot().loading, true);
+        // The host swaps the instrument: a new generation and its bars in one snapshot.
+        context.replaceBars(Array.from({ length: 20 }, (_, index) => candle(9_000 + index * 60, 900 + index)));
+        context.publish({
+            generation: 2,
+            selection: { symbol: 'OTHER', resolution: '1m' },
+            symbolInfo: { id: 'OTHER' },
+            loadedBars: context.barCount(),
+            renderedBars: context.barCount(),
+            hasMoreBefore: false,
+        });
+        finishLoad(0);
+
+        assert.equal((await navigation).outcome, NavigatorNavigationOutcome.Cancelled);
+        assert.equal(navigator.snapshot().loading, false);
+        assert.deepEqual(
+            overviewReport(navigator),
+            { boundsFrom: 9_000, firstSampleFrom: 9_000, boundsCount: 20, sampledBars: 20 },
+            'the overview must describe the data the navigator reports bounds for, not the samples '
+            + 'left over from the instrument that was on screen before the switch',
+        );
+        navigator.dispose();
+    });
+
+    it('resamples when a user pan cancels a navigation', async () => {
+        let finishLoad = null;
+        const older = Array.from({ length: 20 }, (_, index) => candle(2_000 + index * 60, 200 + index));
+        const { data } = quietData(
+            Array.from({ length: 20 }, (_, index) => candle(5_000 + index * 60, 500 + index)),
+            context => {
+                // The page lands and is published while the navigation is still running.
+                context.prependBars(older);
+                context.publish({
+                    loadedBars: context.barCount(),
+                    renderedBars: context.barCount(),
+                    hasMoreBefore: false,
+                });
+                return new Promise(resolve => { finishLoad = () => resolve(older.length); });
+            },
+        );
+        const chart = chartDouble({ from: 5_000, to: 6_140 });
+        const navigator = new ChartNavigator({ chart: chart.chart, data, maxPoints: 40 });
+
+        const navigation = navigator.setRange({ from: 0, to: 6_140 });
+        assert.equal(navigator.snapshot().loading, true);
+        chart.emitRange({ from: 5_500, to: 6_000 });   // the user grabs the chart and pans
+        finishLoad();
+
+        assert.equal((await navigation).outcome, NavigatorNavigationOutcome.Cancelled);
+        assert.equal(navigator.snapshot().loading, false);
+        assert.deepEqual(
+            overviewReport(navigator),
+            { boundsFrom: 2_000, firstSampleFrom: 2_000, boundsCount: 40, sampledBars: 40 },
+            'the page that landed before the pan must be in the overview the navigator publishes',
+        );
+        navigator.dispose();
+    });
 });

@@ -526,7 +526,15 @@ export class ChartNavigator<TBar extends TimedSeriesData> {
             this.acceptDataSnapshot(snapshot, true);
             if (this.dataState.generation !== previousGeneration) {
                 this.activePresetIdValue = null;
-                if (this.loading) this.cancelActiveOperation();
+                if (this.loading) {
+                    this.cancelActiveOperation();
+                    // Pay the rebuild the snapshot above deferred: refreshData saw a navigation in
+                    // flight and only marked the samples dirty. Cancelling is what makes them
+                    // payable, and nothing else will pay them -- a controller that swaps symbol and
+                    // data in one snapshot never emits again, so the previous symbol's overview
+                    // would stay on screen beside the new generation for good.
+                    if (this.overviewDirty) this.refreshOverview(false);
+                }
             }
             this.samplingError = null;
         } catch (error) {
@@ -545,7 +553,10 @@ export class ChartNavigator<TBar extends TimedSeriesData> {
         this.visibleRangeValue = freezeRange(range);
         if (this.applyingRange === 0) {
             this.activePresetIdValue = null;
-            if (this.loading) this.cancelActiveOperation();
+            if (this.loading) {
+                this.cancelActiveOperation();
+                this.refreshOverviewIfDirty();
+            }
             this.emit();
         }
     }
