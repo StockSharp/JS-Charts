@@ -132,6 +132,8 @@ export class ChartPaneManager {
     _wrapper: HTMLDivElement | null;
     _resizeObserver: ResizeObserver | null;
     _headerSyncFrame: number | null;
+    /** Whatever held the global before this manager took it, so dispose() can hand it back. */
+    _previousGlobalManager: ChartPaneManager | null = null;
     _onPointerMove: (() => void) | null;
     _onContextMenu: ((event: MouseEvent) => void) | null;
 
@@ -192,6 +194,10 @@ export class ChartPaneManager {
         };
         chartEl.addEventListener('contextmenu', this._onContextMenu, true);
 
+        // Remembered so dispose() can give the global back rather than leaving it naming a dead
+        // manager. Last-writer-wins is kept -- ChartLegend reads the global and a second init()
+        // taking it is the existing behaviour -- but a manager only clears what it actually set.
+        this._previousGlobalManager = window._chartPaneManager ?? null;
         window._chartPaneManager = this;
     }
 
@@ -369,5 +375,9 @@ export class ChartPaneManager {
         this._headerSyncFrame = null;
         this._onPointerMove = null;
         this._onContextMenu = null;
+        if (window._chartPaneManager === this) {
+            window._chartPaneManager = this._previousGlobalManager ?? undefined;
+        }
+        this._previousGlobalManager = null;
     }
 }
