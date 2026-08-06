@@ -493,6 +493,11 @@ export class ChartLegend {
                 // just the number (the name is already once at row start).
                 const text = TerminalUtils.formatPrice(raw);
                 ve.textContent = singleVal ? `${ind.name}: ${text}` : text;
+                // Colour is not part of the rebuild signature, and a style-only edit keeps the
+                // indicator's id -- so nothing above would notice it. Re-applying here is what
+                // keeps a recoloured overlay from wearing its old colour until the indicator set
+                // changes, and it costs one assignment on a node that already exists.
+                ve.style.color = ind.colors[valueKeys.indexOf(key)] || '#fff';
             });
         }
     }
