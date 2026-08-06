@@ -1276,6 +1276,9 @@ class ChartImpl implements IChartApi {
     // (subscribeOrderPlace) with the price + button — it does not form the order itself.
     private placement: { modifier: string; color: string; title: string } | null = null;
     private placementLine: IPriceLine | null = null;
+    // The series the preview line and the autoscale freeze belong to. The cursor resolves a series
+    // per move, so the preview has to move with it -- a price line cannot change owner.
+    private placementSeries: Series | null = null;
     private modifierHeld = false;
     private orderPlaceListeners: ((e: OrderPlace) => void)[] = [];
 
@@ -1847,9 +1850,14 @@ class ChartImpl implements IChartApi {
         if (p === null) { this.clearPlacementPreview(); return; }
         const color = placement.color;
         const title = placement.title + ' @ ' + this.fmtPrice(p, s.opts.priceFormat);
+        // A different series under the cursor means a different price scale: the line has to be
+        // rebuilt on it, otherwise the dashed preview stays in the pane it started in while showing
+        // a price read off the pane the cursor is over -- and the click emits for that other pane.
+        if (this.placementSeries !== null && this.placementSeries !== s) this.clearPlacementPreview();
         if (this.placementLine === null) {
             try { s.priceScale().applyOptions({ autoScale: false }); } catch { /* */ }
             this.placementLine = s.createPriceLine({ price: p, color, lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, anchored: true, title });
+            this.placementSeries = s;
         } else {
             this.placementLine.applyOptions({ price: p, color, title });
         }
@@ -1857,12 +1865,13 @@ class ChartImpl implements IChartApi {
     }
     private clearPlacementPreview(): void {
         if (this.placementLine === null) return;
-        const s = this.placementLine instanceof PriceLine
+        const s = this.placementSeries ?? (this.placementLine instanceof PriceLine
             ? this.series.find((series) => series.priceLines.includes(this.placementLine as PriceLine)) ?? null
-            : this.mainSeries();
+            : this.mainSeries());
         try { s?.removePriceLine(this.placementLine); } catch { /* */ }
         try { s?.priceScale().applyOptions({ autoScale: true }); } catch { /* */ }
         this.placementLine = null;
+        this.placementSeries = null;
         if (this.canvas.style.cursor === 'crosshair') this.canvas.style.cursor = '';
     }
     subscribeCrosshairMove(cb: CrosshairListener): void { this.assertAlive(); this.crosshairListeners.push(cb); }
