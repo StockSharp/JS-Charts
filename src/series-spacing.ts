@@ -21,9 +21,30 @@ export function calculateBarStepPx(
         const first = item.points[0].time;
         const last = item.points[item.points.length - 1].time;
         if (!Number.isFinite(first) || !Number.isFinite(last)) continue;
-        const timeStep = (last - first) / (item.points.length - 1);
+        const timeStep = denseStep(item.points, last, first);
         const pixels = (timeStep / visibleTimeSpan) * plotWidth;
         if (Number.isFinite(pixels) && pixels > 0) densest = Math.min(densest, pixels);
     }
     return Number.isFinite(densest) ? densest : fallback;
+}
+
+/**
+ * Distance between neighbouring bars inside a session, not the average across the whole series.
+ *
+ * Averaging (last - first) / (count - 1) folds overnight and weekend gaps into the step, which
+ * inflates it structurally -- two 6.5-hour sessions already give 2.35x -- and since a candle body
+ * is 0.72 x barSpacing, neighbouring in-session candles then overlap. The session-aware branch of
+ * the scale already estimates with the smallest positive delta; this is the same technique applied
+ * to the default Continuous mode. A low percentile rather than the strict minimum, so one
+ * duplicated or out-of-order timestamp cannot collapse the whole estimate.
+ */
+function denseStep(points: readonly { time: number }[], last: number, first: number): number {
+    const deltas: number[] = [];
+    for (let i = 1; i < points.length; i += 1) {
+        const delta = points[i].time - points[i - 1].time;
+        if (Number.isFinite(delta) && delta > 0) deltas.push(delta);
+    }
+    if (deltas.length === 0) return (last - first) / Math.max(1, points.length - 1);
+    deltas.sort((left, right) => left - right);
+    return deltas[Math.min(deltas.length - 1, Math.floor(deltas.length * 0.1))];
 }
