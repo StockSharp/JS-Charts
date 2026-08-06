@@ -75,7 +75,9 @@ export class SeriesMarkersPrimitive implements IChartPrimitive, ISeriesMarkersPl
             if (anchor === null || !Number.isFinite(anchor)) continue;
             const baseY = this.options.series.priceToCoordinate(anchor);
             if (baseY === null) continue;
-            const direction = marker.position === 'aboveBar' ? -1 : 1;
+            // 'inBar' is its own case, not the else of 'aboveBar': treating it as belowBar pushed
+            // the marker 14px under the price it is supposed to sit on.
+            const direction = marker.position === 'aboveBar' ? -1 : marker.position === 'inBar' ? 0 : 1;
             const y = baseY + direction * 14;
             canvas.fillStyle = marker.color;
             canvas.strokeStyle = marker.color;
@@ -104,11 +106,13 @@ export class SeriesMarkersPrimitive implements IChartPrimitive, ISeriesMarkersPl
             if (marker.text !== undefined && marker.text.length > 0) {
                 const tailY = y - pointerDirection * 5;
                 canvas.textAlign = 'center';
-                canvas.textBaseline = marker.position === 'aboveBar' ? 'bottom' : 'top';
+                canvas.textBaseline = marker.position === 'aboveBar'
+                    ? 'bottom'
+                    : marker.position === 'inBar' ? 'middle' : 'top';
                 canvas.fillText(
                     marker.text,
                     x,
-                    tailY + (marker.position === 'aboveBar' ? -3 : 3),
+                    marker.position === 'inBar' ? y : tailY + (marker.position === 'aboveBar' ? -3 : 3),
                 );
             }
         }

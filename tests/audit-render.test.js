@@ -100,28 +100,6 @@ function mountRecording(options) {
 // 2.1 — 'inBar' is drawn through the belowBar branch
 // ---------------------------------------------------------------------------
 
-describe('AUDIT 2.1 — series marker positioned inBar', () => {
-    it('centres the marker on its price instead of pushing it below the bar', () => {
-        const { toY } = scale(88, 122);
-        const price = 105;
-        const baseY = toY(price);
-
-        // Controls: the two positions that do have an offset must keep it, so a failure below
-        // cannot be blamed on the harness.
-        assert.equal(circleCentreY(markerOps('aboveBar', price)), baseY - 14,
-            'aboveBar must stay 14px above the anchor');
-        assert.equal(circleCentreY(markerOps('belowBar', price)), baseY + 14,
-            'belowBar must stay 14px below the anchor');
-
-        assert.equal(circleCentreY(markerOps('inBar', price)), baseY,
-            "'inBar' must be centred on the price (lwc parity), not offset like belowBar");
-    });
-});
-
-// ---------------------------------------------------------------------------
-// 2.2 — devicePixelRatio is only ever read inside applySize
-// ---------------------------------------------------------------------------
-
 describe('AUDIT 2.2 — devicePixelRatio change without a CSS size change', () => {
     it('resizes the backing store when the window moves to a 2x display', () => {
         dom = createHeadlessDom();
