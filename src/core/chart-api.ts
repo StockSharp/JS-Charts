@@ -304,7 +304,10 @@ export interface SeriesOptions {
     priceScaleId?: string;
     priceLineVisible?: boolean;
     lastValueVisible?: boolean;     // hide the per-series last-value pill on the right axis
-    priceLineSource?: 'lastBar' | 'lastVisible';   // last-bar (default) or last-visible point
+    // Which point feeds the axis tag: the right edge of the window ('lastVisible', the default
+    // here) or the newest point in the data ('lastBar', which is what lightweight-charts defaults
+    // to). See drawPriceTags for why the default differs.
+    priceLineSource?: 'lastBar' | 'lastVisible';
     priceFormat?: PriceFormat;
     // point&figure / renko
     boxSize?: number;
@@ -3042,9 +3045,10 @@ class ChartImpl implements IChartApi {
         for (const s of this.activeSeries) {
             if (s.points.length === 0) continue;
             if (s.opts.lastValueVisible === false) continue;
-            // lwc parity: priceLineSource = 'lastBar' (default) shows
-            // the absolute last data point; 'lastVisible' tracks the
-            // right edge of the visible window (terminal-style).
+            // 'lastVisible' -- the default -- tracks the right edge of the visible window, which
+            // is what keeps the tag alive while the chart is being panned. 'lastBar' shows the
+            // absolute last data point, matching the lightweight-charts default for callers that
+            // want it.
             let p: AnyPoint;
             const src = s.opts.priceLineSource ?? 'lastVisible';
             if (src === 'lastBar') {
