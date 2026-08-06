@@ -8,6 +8,7 @@
 //   * every catalog param key is actually read by that indicator's calc fn (pure TS — always runs).
 //   * every client indicator kind is a real StockSharp indicator (runs when the .NET dump is
 //     available; skipped otherwise so the node-only suite still passes without the SDK).
+//   * every parameter default matches the platform's, or is a named deliberate divergence.
 // Informational (logged, not asserted — the client deliberately differs): pane / param-count deltas.
 
 const { describe, it } = require('node:test');
@@ -88,6 +89,43 @@ const PARAM_COUNT_DELTAS = {
     PercentagePriceOscillator: 'client exposes both MA lengths plus the signal length',
 };
 
+// Parameter defaults that deliberately differ from the platform's. Same exact-set rule as the
+// lists above: a new drift fails, and an entry that no longer applies fails too.
+//
+// Most of them are one decision: StockSharp's constructor values are its own history -- SMA 32,
+// RSI 15, CCI 15, Williams %R 5 -- while every charting package a visitor has used ships the
+// conventional periods, and the web catalog is what a first-time visitor sees. Whoever wants the
+// platform's number types it in; whoever wants the textbook indicator gets it without knowing
+// there was a choice.
+const CONVENTIONAL = 'client ships the conventional period; the platform default is its own history';
+const DEFAULT_DELTAS = {
+    SimpleMovingAverage: CONVENTIONAL,            // 20 vs 32
+    ExponentialMovingAverage: CONVENTIONAL,       // 20 vs 32
+    WeightedMovingAverage: CONVENTIONAL,          // 20 vs 32
+    BollingerBands: CONVENTIONAL,                 // 20 vs 32
+    Envelope: CONVENTIONAL,                       // 20 vs 32
+    RelativeStrengthIndex: CONVENTIONAL,          // 14 vs 15
+    AverageTrueRange: CONVENTIONAL,               // 14 vs 32
+    CommodityChannelIndex: CONVENTIONAL,          // 20 vs 15
+    WilliamsR: CONVENTIONAL,                      // 14 vs 5
+    DirectionalIndex: CONVENTIONAL,               // 14 vs 5
+    RateOfChange: CONVENTIONAL,                   // 12 vs 5
+    Trix: CONVENTIONAL,                           // 14 vs 32
+    BearPower: CONVENTIONAL,                      // 13 vs 32
+    BullPower: CONVENTIONAL,                      // 13 vs 32
+    OnBalanceVolumeMean: CONVENTIONAL,            // 14 vs 32
+    // Not a period at all: the platform's 1 makes the efficiency ratio window a single bar, so
+    // KAMA degenerates into the close price.
+    KaufmanAdaptiveMovingAverage: 'platform default of 1 collapses the adaptive window',
+    // The client's length is the outer stochastic window of its own five-parameter form; the
+    // platform exposes one Length on the composite (see PARAM_COUNT_DELTAS).
+    SchaffTrendCycle: 'client parameter set is not the platform single Length',
+    // 5% vs the platform's 0.1%. Left as a divergence rather than silently aligned because it is
+    // also inconsistent with the client's own Peak/Trough, which do use 0.001 -- one of the two
+    // is wrong and that is a product call, not a test's.
+    ZigZag: 'client uses a 5% reversal; the platform, and the client Peak/Trough, use 0.1%',
+};
+
 // Compare an observed set against an allow-list, failing on BOTH unexpected members and stale
 // entries. The two mean opposite things: something new drifted in, versus something was fixed
 // and its exemption should be deleted.
@@ -158,5 +196,33 @@ describe('indicator catalog parity with StockSharp', () => {
         // exactly like the twenty-seven we have decided to live with. Both lists are now exact.
         assertAllowList(paneDiffs, PANE_DELTAS, 'pane placements differing from StockSharp');
         assertAllowList(countDiffs, PARAM_COUNT_DELTAS, 'param counts differing from StockSharp');
+    });
+
+    // Counting parameters says nothing about their values, and the numeric parity suite feeds the
+    // PLATFORM's parameters into the client calc -- so a client default that disagrees with the
+    // platform is invisible to every other check here. A user adding the indicator on the site and
+    // on the terminal gets two different lines, and nothing says so.
+    it('every parameter default matches StockSharp, bar the named divergences', (t) => {
+        if (!csharp) return t.skip(`StockSharp .NET dump unavailable: ${status.reason}`);
+        const drifted = [];
+        const detail = [];
+        for (const e of catalog) {
+            const cs = csByKind.get(e.serverKind.toLowerCase());
+            if (!cs) continue;
+            const csDefaults = new Map((cs.params || []).map((p) => [p.key.toLowerCase(), p.def]));
+            const differing = [];
+            for (const p of e.params || []) {
+                if (!csDefaults.has(p.key.toLowerCase())) continue;   // param counts are the other test's job
+                const csDef = csDefaults.get(p.key.toLowerCase());
+                if (csDef === null || csDef === undefined) continue;  // the platform exposes no default
+                if (Number(p.default) !== Number(csDef)) differing.push(`${p.key} client=${p.default} cs=${csDef}`);
+            }
+            if (differing.length) {
+                drifted.push(e.id);
+                detail.push(`${e.id}: ${differing.join(', ')}`);
+            }
+        }
+        if (detail.length) console.log('[parity] default deltas:\n  ' + detail.join('\n  '));
+        assertAllowList(drifted, DEFAULT_DELTAS, 'parameter defaults differing from StockSharp');
     });
 });
