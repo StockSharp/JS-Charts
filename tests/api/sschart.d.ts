@@ -6702,6 +6702,7 @@ export declare class TradingCalendar implements ITradingCalendar {
     private isoWeekday;
     private localParts;
     private toUtc;
+    private firstInstantAfterGap;
     private offsetsForDate;
 }
 

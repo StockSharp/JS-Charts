@@ -123,11 +123,19 @@ describe('series renderers: draw-call snapshot (browser-free)', () => {
 
     it('matches the committed draw-call snapshot', () => {
         const current = render();
-        if (UPDATE || !existsSync(SNAP_FILE)) {
+        if (UPDATE) {
             mkdirSync(SNAP_DIR, { recursive: true });
             writeFileSync(SNAP_FILE, current);
-            return; // bootstrap / update run
+            return; // explicit update run
         }
+        // A missing snapshot is a failure, not a bootstrap. Writing one silently and passing green
+        // turned the only render verification in CI into an always-pass the moment a snapshot was
+        // deleted, renamed or landed outside SNAP_DIR -- and mutated the working tree while doing it.
+        assert.ok(
+            existsSync(SNAP_FILE),
+            `draw-call snapshot is missing: ${SNAP_FILE}. Re-create it deliberately with `
+            + 'UPDATE_SNAPSHOTS=1 and review the diff; it is not created automatically.',
+        );
         assert.equal(current, readFileSync(SNAP_FILE, 'utf8'));
     });
 });

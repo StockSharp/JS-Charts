@@ -87,11 +87,17 @@ describe('indicator painters: series-mapping snapshot (browser-free)', () => {
 
     it('matches the committed mapping snapshot', () => {
         const current = render();
-        if (UPDATE || !existsSync(SNAP_FILE)) {
+        if (UPDATE) {
             mkdirSync(SNAP_DIR, { recursive: true });
             writeFileSync(SNAP_FILE, current);
-            return;
+            return; // explicit update run
         }
+        // A missing snapshot is a failure, not a bootstrap -- see series-drawcalls.test.js.
+        assert.ok(
+            existsSync(SNAP_FILE),
+            `draw-call snapshot is missing: ${SNAP_FILE}. Re-create it deliberately with `
+            + 'UPDATE_SNAPSHOTS=1 and review the diff; it is not created automatically.',
+        );
         assert.equal(current, readFileSync(SNAP_FILE, 'utf8'));
     });
 });

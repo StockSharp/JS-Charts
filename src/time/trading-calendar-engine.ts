@@ -484,10 +484,8 @@ export class TradingCalendar implements ITradingCalendar {
         return disambiguation === 'earlier' ? candidates[0] : candidates[candidates.length - 1];
     }
 
-    /**
-     * Walks forward from the wanted local time to the first instant that maps back to a real local
-     * time at or after it. Bounded by the largest gap any zone has ever used.
-     */
+    // Walks forward from the wanted local time to the first instant that maps back to a real local
+    // time at or after it. Bounded by the largest gap any zone has ever used.
     private firstInstantAfterGap(value: LocalDateTimeParts): Time {
         const wanted = localEpoch(value);
         const offsets = this.offsetsForDate(value);
