@@ -1369,6 +1369,13 @@ class ChartImpl implements IChartApi {
                 if (this.autoResizer === observer) this.autoResizer = null;
             });
         }
+        // devicePixelRatio was read only from applySize, so moving the window between a 1x and a 2x
+        // display left the backing store at the old ratio -- blurry or oversampled -- until some
+        // unrelated CSS size change happened to run applySize again. A chart given explicit
+        // width/height creates no ResizeObserver at all, so it never recovered without a manual
+        // resize(). The media query re-arms itself because its own condition changes with the ratio.
+        this.watchDevicePixelRatio();
+
         // Seed scale margins from constructor options.
         if (this.opts.rightPriceScale?.scaleMargins) {
             const sm = this.opts.rightPriceScale.scaleMargins;
@@ -1969,6 +1976,34 @@ class ChartImpl implements IChartApi {
     }
 
     // ---- internal ---------------------------------------------------
+    private watchDevicePixelRatio(): void {
+        if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+        let query: MediaQueryList | null = null;
+        let armedRatio = 0;
+        const onChange = (): void => {
+            arm();
+            if (this.disposed) return;
+            // Same CSS size, new ratio: applySize rereads devicePixelRatio and resizes the stores.
+            this.applySize(this.width, this.height);
+            this.scheduleDraw(RenderDirty.All);
+        };
+        // Re-arms only when the ratio really moved. Registering unconditionally would re-enter
+        // through an implementation that notifies on subscribe, and never terminate.
+        const arm = (): void => {
+            const ratio = window.devicePixelRatio || 1;
+            if (query !== null && ratio === armedRatio) return;
+            query?.removeEventListener('change', onChange);
+            armedRatio = ratio;
+            query = window.matchMedia(`(resolution: ${ratio}dppx)`);
+            query.addEventListener('change', onChange);
+        };
+        arm();
+        this.disposables.defer(() => {
+            query?.removeEventListener('change', onChange);
+            query = null;
+        });
+    }
+
     private applySize(w: number, h: number): void {
         this.width = w;
         this.height = h;
