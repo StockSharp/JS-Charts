@@ -127,12 +127,17 @@ export class TimeAxisFormatter {
                 ? this.format('month', { timeZone: this.timeZone, month: 'short' }, time)
                 : this.format('day', { timeZone: this.timeZone, day: 'numeric' }, time);
         }
-        return this.format('time', {
+        // The cache key has to name the option set, not just the kind: seconds are conditional on
+        // the step, so a constant 'time' key meant whichever step formatted first won for the life
+        // of the instance -- 5-minute ticks kept showing seconds, or never gained them, depending
+        // only on which side of the 60s boundary the chart happened to be zoomed to first.
+        const withSeconds = this.secondsVisible && step < 60;
+        return this.format(withSeconds ? 'time-seconds' : 'time', {
             timeZone: this.timeZone,
             hour: '2-digit',
             minute: '2-digit',
             hourCycle: 'h23',
-            ...(this.secondsVisible && step < 60 ? { second: '2-digit' } : {}),
+            ...(withSeconds ? { second: '2-digit' } : {}),
         }, time);
     }
 

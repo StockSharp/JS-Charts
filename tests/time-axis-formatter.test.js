@@ -71,3 +71,32 @@ describe('TimeAxisFormatter', () => {
         assert.throws(() => new TimeAxisFormatter({ locale: 'not_a_locale' }), /invalid.*locale/i);
     });
 });
+
+describe('tick formatter cache key varies with the step-dependent seconds option', () => {
+    it('shows seconds below a 60s step and drops them above it, in either order', () => {
+        const time = utc(2026, 7, 13, 9, 30, 45);
+        const options = {
+            locale: 'en-GB',
+            timeZone: 'UTC',
+            timeVisible: true,
+            secondsVisible: true,
+        };
+
+        // Same instance, both sides of the 60s threshold. Zooming a live chart
+        // through that boundary hits exactly this sequence.
+        const fineFirst = new TimeAxisFormatter(options);
+        const fineThenCoarse = [fineFirst.formatTick(time, 30), fineFirst.formatTick(time, 300)];
+
+        const coarseFirst = new TimeAxisFormatter(options);
+        const coarseThenFine = [coarseFirst.formatTick(time, 300), coarseFirst.formatTick(time, 30)];
+
+        assert.deepEqual(
+            { fineThenCoarse, coarseThenFine },
+            {
+                fineThenCoarse: ['09:30:45', '09:30'],
+                coarseThenFine: ['09:30', '09:30:45'],
+            },
+            'the step that is formatted first must not decide the seconds option forever',
+        );
+    });
+});
