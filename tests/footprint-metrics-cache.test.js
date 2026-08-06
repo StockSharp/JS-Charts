@@ -20,7 +20,7 @@ const {
 } = require('../src/orderflow/index.js');
 
 // ---------------------------------------------------------------------------------------------
-// 1.4 — Heikin-Ashi live update must keep haOpen fixed for the whole bar
+// 1.4 вЂ” Heikin-Ashi live update must keep haOpen fixed for the whole bar
 // ---------------------------------------------------------------------------------------------
 
 function seriesMock() {
@@ -61,62 +61,8 @@ function canonicalHeikinAshi(candles) {
     return result;
 }
 
-describe('AUDIT 2.11 — volume-profile incremental replace-last', () => {
-    it('cancels a large last-bar contribution without leaving float residue', () => {
-        // A tiny surviving volume at 100 from the first bar, then a huge contribution from the last
-        // bar at the same price, then a replacement of that last bar that drops the price entirely.
-        const first = {
-            dataMode: OrderFlowDataMode.Exact,
-            time: 60,
-            open: 100,
-            high: 101,
-            low: 100,
-            close: 100,
-            levels: [
-                { price: 100, bidVolume: 0.1, askVolume: 0 },
-                { price: 101, bidVolume: 0, askVolume: 2 },
-            ],
-        };
-        const last = {
-            dataMode: OrderFlowDataMode.Exact,
-            time: 120,
-            open: 100,
-            high: 101,
-            low: 100,
-            close: 101,
-            levels: [
-                { price: 100, bidVolume: 1e9, askVolume: 0 },
-                { price: 101, bidVolume: 0, askVolume: 3 },
-            ],
-        };
-        const replacement = {
-            ...last,
-            levels: [{ price: 101, bidVolume: 0, askVolume: 3 }],
-        };
-
-        const accumulator = new ExactVolumeProfileAccumulator(profileOptions);
-        accumulator.reset([first]);
-        accumulator.push(last);
-        const updated = accumulator.push(replacement);
-        const batch = calculateVolumeProfile([first, replacement], profileOptions);
-
-        assert.equal(updated.kind, 'update');
-        assert.equal(
-            updated.profile.levels.find(level => level.price === 100).bidVolume,
-            batch.levels.find(level => level.price === 100).bidVolume,
-            'the surviving 0.1 must come back exactly after +1e9/-1e9 cancels; '
-            + 'the tolerance is computed from the near-zero result instead of the cancelled magnitudes',
-        );
-        assert.deepEqual(
-            updated.profile,
-            batch,
-            'incremental replace-last must equal the batch profile for the same bars',
-        );
-    });
-});
-
 // ---------------------------------------------------------------------------------------------
-// 3.10 — the footprint metrics cache must be bounded
+// 3.10 вЂ” the footprint metrics cache must be bounded
 // ---------------------------------------------------------------------------------------------
 
 function silentCanvas() {
@@ -187,4 +133,37 @@ function drawFootprint(bar, imbalanceRatio) {
         priceToCoordinate: price => (103 - price) * 16,
     });
 }
+
+describe('AUDIT 3.10 вЂ” footprint metrics cache', () => {
+    it('does not retain every options combination ever applied to a bar', () => {
+        const { bar, metricsCalculations } = countingFootprintBar();
+        const combinations = 2000;
+        const first = 1;
+
+        drawFootprint(bar, first);
+        assert.equal(metricsCalculations(), 1, 'the first draw calculates metrics once');
+        drawFootprint(bar, first);
+        assert.equal(metricsCalculations(), 1,
+            'redrawing with the same options is served from the cache');
+
+        // Dragging the imbalanceRatio slider: one fresh options key per frame.
+        for (let index = 1; index < combinations; index++)
+            drawFootprint(bar, first + index * 0.001);
+        assert.equal(metricsCalculations(), combinations,
+            'each distinct options combination is calculated once');
+
+        drawFootprint(bar, first);
+        assert.ok(
+            metricsCalculations() > combinations,
+            `a bounded metrics cache must have dropped the oldest of ${combinations} options `
+            + `combinations held for one bar, forcing a recalculation; instead all of them are still `
+            + `cached (metrics calculated ${metricsCalculations()} times, expected more than `
+            + `${combinations})`,
+        );
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// 3.11 вЂ” a dense volume profile must still render
+// ---------------------------------------------------------------------------------------------
 

@@ -126,6 +126,17 @@ type FootprintContext = SeriesRendererContext<FootprintBar, FootprintSeriesOptio
 
 const metricCache = new WeakMap<FootprintBar, Map<string, FootprintBarMetrics>>();
 
+/**
+ * How many option combinations to remember per bar.
+ *
+ * The map only ever grew: every combination of the seven options that had ever been applied kept a
+ * full metrics object alive per bar, so dragging the imbalanceRatio slider across a loaded chart
+ * pinned hundreds of them until setData replaced the bars themselves. Redrawing uses one
+ * combination at a time and switching back and forth between a couple is the realistic case, so a
+ * small bound costs nothing and removes the growth.
+ */
+const METRIC_CACHE_LIMIT = 4;
+
 function metricsFor(
     bar: FootprintBar,
     options: Readonly<FootprintSeriesOptions>,
@@ -138,6 +149,12 @@ function metricsFor(
     if (entries === undefined) {
         entries = new Map();
         metricCache.set(bar, entries);
+    }
+    // Oldest first: Map preserves insertion order, so the first key is the least recently added.
+    while (entries.size >= METRIC_CACHE_LIMIT) {
+        const oldest = entries.keys().next();
+        if (oldest.done) break;
+        entries.delete(oldest.value);
     }
     entries.set(key, metrics);
     return metrics;
