@@ -10,6 +10,7 @@ const {
     NavigatorNavigationOutcome,
     NavigatorRangePreset,
     NavigatorStatus,
+    defaultNavigatorPresets,
 } = require('../src/workspace/chart-navigator.js');
 
 function candle(time, close = time) {
@@ -440,5 +441,87 @@ describe('ChartNavigator', () => {
             'the page that landed before the pan must be in the overview the navigator publishes',
         );
         navigator.dispose();
+    });
+
+    // The built-in presets do UTC calendar arithmetic -- month-end clamping and a negative month
+    // rollover -- which is the classic place to be off by a day once a year. Nothing pinned it:
+    // every navigation test injects its own presets, and the only assertion about these was that
+    // they exist.
+    describe('built-in presets', () => {
+        const utc = (text) => Date.parse(text) / 1_000;
+        const iso = (time) => new Date(time * 1_000).toISOString();
+
+        function presetRange(id, anchorIso) {
+            const anchor = utc(anchorIso);
+            // Date.parse rolls a date that does not exist forward instead of refusing it, which
+            // would quietly test a different day than the one written here.
+            assert.equal(iso(anchor), anchorIso.replace('Z', '.000Z'), 'the anchor must be a real date');
+            const definition = defaultNavigatorPresets().find(item => item.id === id);
+            assert.ok(definition, `preset ${id} must exist`);
+            return definition.range({
+                anchor,
+                bounds: { from: anchor - 10 * 365 * 86_400, to: anchor, count: 1_000 },
+                data: snapshot(),
+            });
+        }
+
+        it('subtracts whole calendar months, clamping to the end of a short month', () => {
+            assert.deepEqual(
+                [
+                    // 31 March back one month is the last day of February, not 3 March.
+                    iso(presetRange(NavigatorRangePreset.OneMonth, '2026-03-31T14:25:00Z').from),
+                    // 2024 is a leap year: the same date clamps a day later.
+                    iso(presetRange(NavigatorRangePreset.OneMonth, '2024-03-31T14:25:00Z').from),
+                    // 31 August back six months crosses a February too.
+                    iso(presetRange(NavigatorRangePreset.SixMonths, '2026-08-31T00:00:00Z').from),
+                    // A date that exists in both months is untouched.
+                    iso(presetRange(NavigatorRangePreset.ThreeMonths, '2026-05-15T09:30:00Z').from),
+                ],
+                [
+                    '2026-02-28T14:25:00.000Z',
+                    '2024-02-29T14:25:00.000Z',
+                    '2026-02-28T00:00:00.000Z',
+                    '2026-02-15T09:30:00.000Z',
+                ],
+            );
+        });
+
+        it('rolls the year over when the month index goes negative', () => {
+            assert.deepEqual(
+                [
+                    iso(presetRange(NavigatorRangePreset.ThreeMonths, '2026-01-15T00:00:00Z').from),
+                    iso(presetRange(NavigatorRangePreset.OneYear, '2026-01-31T23:59:59Z').from),
+                    iso(presetRange(NavigatorRangePreset.FiveYears, '2024-02-29T00:00:00Z').from),
+                ],
+                [
+                    '2025-10-15T00:00:00.000Z',
+                    '2025-01-31T23:59:59.000Z',
+                    // Five years before a leap day is not a leap day.
+                    '2019-02-28T00:00:00.000Z',
+                ],
+            );
+        });
+
+        it('anchors YTD at the start of the UTC year, and never returns an empty range', () => {
+            const midYear = presetRange(NavigatorRangePreset.YearToDate, '2026-08-06T12:00:00Z');
+            assert.equal(iso(midYear.from), '2026-01-01T00:00:00.000Z');
+            assert.equal(iso(midYear.to), '2026-08-06T12:00:00.000Z');
+
+            // On the first instant of the year the year start is the anchor itself: the preset
+            // owes a range that still spans something.
+            const newYear = presetRange(NavigatorRangePreset.YearToDate, '2026-01-01T00:00:00Z');
+            assert.equal(newYear.to - newYear.from, 86_400);
+        });
+
+        it('measures the day presets in fixed seconds, and All means everything', () => {
+            const day = presetRange(NavigatorRangePreset.OneDay, '2026-03-29T12:00:00Z');
+            assert.equal(day.to - day.from, 86_400, 'a DST date does not change a UTC day');
+            assert.equal(
+                presetRange(NavigatorRangePreset.FiveDays, '2026-03-29T12:00:00Z').to
+                - presetRange(NavigatorRangePreset.FiveDays, '2026-03-29T12:00:00Z').from,
+                5 * 86_400,
+            );
+            assert.equal(presetRange(NavigatorRangePreset.All, '2026-03-29T12:00:00Z'), null);
+        });
     });
 });
