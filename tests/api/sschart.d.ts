@@ -944,7 +944,13 @@ export declare class TimeScaleModel {
     visibleTo: number;
     get dataRange(): TimeRange;
     get visibleRange(): TimeRange | null;
-    updateDataRange(from: number, to: number): boolean;
+    /**
+     * `span` is the fallback width for a degenerate range -- one bar, where from === to. Rejecting
+     * that case left the model on its constructor defaults, so a chart fed a single candle (the
+     * ordinary start of a live feed, and any single-point series) never showed anything: fitContent
+     * re-fitted the stale 0..1 window and setVisibleRange was clamped back to it.
+     */
+    updateDataRange(from: number, to: number, span?: number): boolean;
     fitContent(): boolean;
     scrollToRealTime(gapRatio?: number): boolean;
     setVisibleRange(range: TimeRange, clampToData?: boolean): boolean;

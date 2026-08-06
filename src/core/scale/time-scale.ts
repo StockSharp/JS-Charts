@@ -17,8 +17,18 @@ export class TimeScaleModel {
             : null;
     }
 
-    updateDataRange(from: number, to: number): boolean {
-        if (!Number.isFinite(from) || !Number.isFinite(to) || !(to > from)) return false;
+    /**
+     * `span` is the fallback width for a degenerate range -- one bar, where from === to. Rejecting
+     * that case left the model on its constructor defaults, so a chart fed a single candle (the
+     * ordinary start of a live feed, and any single-point series) never showed anything: fitContent
+     * re-fitted the stale 0..1 window and setVisibleRange was clamped back to it.
+     */
+    updateDataRange(from: number, to: number, span = 60): boolean {
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return false;
+        if (to === from) {
+            const half = Number.isFinite(span) && span > 0 ? span / 2 : 0.5;
+            return this.updateDataRange(from - half, to + half, span);
+        }
         this.dataFrom = from;
         this.dataTo = to;
         const noOverlap = this.visibleTo < from || this.visibleFrom > to;

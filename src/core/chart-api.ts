@@ -1988,10 +1988,23 @@ class ChartImpl implements IChartApi {
             lo = Math.min(lo, t0);
             hi = Math.max(hi, t1);
         }
-        if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
-            this.model.timeScale.updateDataRange(lo, hi);
+        if (Number.isFinite(lo) && Number.isFinite(hi) && hi >= lo) {
+            // hi === lo is a single bar, which the scale widens around rather than refusing: a
+            // chart holding one candle has a position on the axis like any other.
+            this.model.timeScale.updateDataRange(lo, hi, this.estimateBarSpanSeconds());
         }
         this.scheduleDraw();
+    }
+
+    /** Typical distance between bars, used to give a one-bar series a sensible width. */
+    private estimateBarSpanSeconds(): number {
+        for (const s of this.series) {
+            const points = s.points;
+            if (points.length < 2) continue;
+            const step = points[1].time - points[0].time;
+            if (Number.isFinite(step) && step > 0) return step;
+        }
+        return 60;
     }
 
     fitContent(): void {
