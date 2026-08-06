@@ -34,6 +34,8 @@ export interface LegendCrosshairParam {
  */
 export interface LegendChart {
     subscribeCrosshairMove(handler: (param: LegendCrosshairParam) => void): void;
+    /** Optional so an existing host that does not offer it still satisfies the contract. */
+    unsubscribeCrosshairMove?(handler: (param: LegendCrosshairParam) => void): void;
     clearCrosshairPosition?(): void;
 }
 
@@ -67,6 +69,12 @@ export class ChartLegend {
     _rawCandles: readonly LegendBar[];
     _indicatorEngine: LegendIndicatorEngine | null;
     _isHovered: boolean = false;
+    // Kept so dispose() can detach exactly what init() attached.
+    _onMouseEnter: (() => void) | null = null;
+    _onMouseLeave: (() => void) | null = null;
+    _onClick: ((event: MouseEvent) => void) | null = null;
+    _onCrosshair: ((param: LegendCrosshairParam) => void) | null = null;
+    _engineHook: { previous: (() => void) | null; wrapper: () => void } | null = null;
     _lastIndSignature: string | undefined;
     _lastSubPaneIds: Set<string | null> | undefined;
     onEditIndicator: ((id: number, type: string) => void) | null = null;
@@ -94,21 +102,25 @@ export class ChartLegend {
         // while hovering; this hover flag covers the indicator-engine
         // RAF-driven repaint path as well.
         this._isHovered = false;
-        this._el.addEventListener('mouseenter', () => {
+        // Named handlers, kept for dispose(). A host that rebuilds the chart on every symbol or
+        // timeframe change has to be able to detach the legend; anonymous listeners and an
+        // unremovable crosshair subscription made that impossible.
+        const el = this._el;
+        this._onMouseEnter = () => {
             this._isHovered = true;
             // Drop the on-chart vertical crosshair line immediately — LWC
             // leaves the last position drawn unless we tell it to clear,
             // which would otherwise still ghost the bar behind the legend.
-            try { this._chart.clearCrosshairPosition?.(); } catch {}
-        });
-        this._el.addEventListener('mouseleave', () => { this._isHovered = false; });
-
-        this._chart.subscribeCrosshairMove((param: LegendCrosshairParam) => {
-            this._onCrosshairMove(param);
-        });
+            try { this._chart?.clearCrosshairPosition?.(); } catch {}
+        };
+        this._onMouseLeave = () => { this._isHovered = false; };
+        this._onCrosshair = (param: LegendCrosshairParam) => { this._onCrosshairMove(param); };
+        el.addEventListener('mouseenter', this._onMouseEnter);
+        el.addEventListener('mouseleave', this._onMouseLeave);
+        this._chart.subscribeCrosshairMove(this._onCrosshair);
 
         // Delegate click on edit / remove / chart-type buttons (legend re-renders on crosshair move).
-        this._el.addEventListener('click', (e) => {
+        this._onClick = (e: MouseEvent) => {
             const tgt = e.target as Element | null;
             const removeBtn = tgt?.closest('.legend-remove-btn') as HTMLElement | null;
             if (removeBtn) {
@@ -177,7 +189,38 @@ export class ChartLegend {
                     });
                 }, 0);
             }
-        });
+        };
+        el.addEventListener('click', this._onClick);
+    }
+
+    /**
+     * Detaches the legend: DOM listeners, the crosshair subscription and the engine hook it wrapped.
+     * A terminal that rebuilds its chart on every symbol or timeframe change could not release the
+     * legend at all before, so each rebuild left another set of listeners and another wrapper
+     * around engine.onChange.
+     */
+    dispose() {
+        if (this._el) {
+            if (this._onMouseEnter) this._el.removeEventListener('mouseenter', this._onMouseEnter);
+            if (this._onMouseLeave) this._el.removeEventListener('mouseleave', this._onMouseLeave);
+            if (this._onClick) this._el.removeEventListener('click', this._onClick);
+        }
+        if (this._chart && this._onCrosshair) this._chart.unsubscribeCrosshairMove?.(this._onCrosshair);
+        if (this._indicatorEngine && this._engineHook) {
+            // Only give the hook back if nobody wrapped it after us; otherwise dropping ours would
+            // silently unhook theirs too.
+            if (this._indicatorEngine.onChange === this._engineHook.wrapper) {
+                this._indicatorEngine.onChange = this._engineHook.previous;
+            }
+        }
+        this._onMouseEnter = null;
+        this._onMouseLeave = null;
+        this._onClick = null;
+        this._onCrosshair = null;
+        this._engineHook = null;
+        this._indicatorEngine = null;
+        this._chart = null;
+        this._el = null;
     }
 
     setChartType(type: string) {
@@ -207,10 +250,14 @@ export class ChartLegend {
         // click (and on mobile there's no hover at all).
         if (engine) {
             const prev = engine.onChange;
-            engine.onChange = () => {
+            const wrapper = () => {
                 if (prev) prev();
                 this.refresh();
             };
+            engine.onChange = wrapper;
+            this._engineHook = { previous: prev, wrapper };
+        } else {
+            this._engineHook = null;
         }
     }
 

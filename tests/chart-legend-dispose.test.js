@@ -139,7 +139,32 @@ const LINE = [
 const CLEAR = 'clearRect(0, 0, 800, 400)';
 
 
-describe('AUDIT 3.6 — ChartLegend must be detachable', () => {
+function legendFixture() {
+    dom = createHeadlessDom();
+    const element = dom.document.createElement('div');
+    dom.document.getElementById = (id) => (id === 'chartLegend' ? element : null);
+
+    const crosshairHandlers = [];
+    const chart = {
+        subscribeCrosshairMove(handler) { crosshairHandlers.push(handler); },
+        unsubscribeCrosshairMove(handler) {
+            const at = crosshairHandlers.indexOf(handler);
+            if (at >= 0) crosshairHandlers.splice(at, 1);
+        },
+        clearCrosshairPosition() { },
+    };
+
+    const originalOnChange = () => { };
+    const engine = {
+        onChange: originalOnChange,
+        getIndicators: () => [],
+        getValuesAt: () => [],
+        remove() { },
+    };
+    return { element, chart, crosshairHandlers, engine, originalOnChange };
+}
+
+describe('ChartLegend is detachable', () => {
     it('releases its DOM listeners, its crosshair subscription and the engine hook it wrapped', () => {
         const { element, chart, crosshairHandlers, engine, originalOnChange } = legendFixture();
 
@@ -198,4 +223,3 @@ function paneManagerFixture(containerId) {
     manager.init({ addPane: () => { throw new Error('no pane is added by this test'); } });
     return manager;
 }
-
