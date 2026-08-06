@@ -2750,7 +2750,11 @@ class ChartImpl implements IChartApi {
 
         ctx.fillStyle = this.opts.rightPriceScale?.borderColor ?? DEF_BORDER;
         for (const splitter of this.paneLayoutResult.splitters) {
-            const y = Math.round(splitter.rect.y + splitter.rect.height / 2) + 0.5;
+            // No half-pixel offset: that trick centres a 1px STROKE on a grid line, and this is a
+            // fill. Adding 0.5 to a fill straddles two device rows, so at DPR 1 the separator came
+            // out as two rows at half alpha instead of one crisp line. (At DPR 2 it happened to
+            // land on a whole device row, which is why the defect hid on hi-dpi machines.)
+            const y = Math.round(splitter.rect.y + splitter.rect.height / 2);
             ctx.fillRect(splitter.rect.x, y, splitter.rect.width, 1);
         }
         this.activatePane(this.model.mainPane);

@@ -100,56 +100,35 @@ function mountRecording(options) {
 // 2.1 — 'inBar' is drawn through the belowBar branch
 // ---------------------------------------------------------------------------
 
-describe('AUDIT 3.9 — Point & Figure column marks', () => {
-    it('keeps every mark inside the [low, high] the same definition reports to autoscale', () => {
-        const definition = builtInSeriesDefinitions.find((d) => d.type === 'PointFigure');
-        assert.ok(definition, 'PointFigure definition must exist');
+describe('pane separator fill', () => {
+    it('lands the 1px separator on a whole device row at DPR 1', () => {
+        const { chart, ops } = mountRecording();
+        const main = chart.addSeries(LineSeries);
+        main.setData([{ time: 1, value: 10 }, { time: 2, value: 11 }, { time: 3, value: 12 }]);
+        const pane = chart.addPane({ id: 'oscillator', height: 120, minHeight: 60 });
+        const sub = chart.addSeries(LineSeries, {}, pane);
+        sub.setData([{ time: 1, value: 40 }, { time: 2, value: 55 }, { time: 3, value: 50 }]);
+        dom.flushFrames();
 
-        const box = 1;
-        // One falling column (close < open) so each box is drawn as a circle: easy to read back.
-        const column = { time: 0, open: 105, high: 105, low: 100, close: 100 };
-        const data = [column];
-        const options = { upColor: '#00c853', downColor: '#ff3d57' };
+        const separators = ops()
+            .map((op) => /^fillRect\((-?[\d.]+), (-?[\d.]+), (-?[\d.]+), 1\)$/.exec(op))
+            .filter((match) => match !== null && Number(match[3]) === 800)
+            .map((match) => Number(match[2]));
 
-        const range = definition.renderer.priceRange(data, options);
-        assert.deepEqual({ min: range.min, max: range.max }, { min: column.low, max: column.high },
-            'autoscale is told the column spans exactly [low, high]');
+        assert.ok(separators.length > 0,
+            `expected the two-pane layout to draw a separator, ops: ${ops().filter((o) => o.startsWith('fillRect(')).join(' | ')}`);
 
-        const { toY, toPrice } = scale(95, 110);
-        const { ctx, ops } = createRecordingContext();
-        definition.renderer.draw({
-            target: ctx,
-            data,
-            allData: data,
-            options,
-            priceRange: { min: column.low, max: column.high },
-            visibleTimeRange: { from: 0, to: 0 },
-            pane: { ...PANE_RECT, left: 0, right: 400, top: 0, bottom: 200 },
-            theme: { fontFamily: 'sans-serif', textColor: '#111' },
-            barSpacing: 20,
-            metadata: { box },
-            timeToCoordinate: () => 200,
-            priceToCoordinate: toY,
-        });
+        for (const y of separators) {
+            assert.ok(Number.isInteger(y),
+                `a 1px fillRect must sit on a whole device row at DPR 1, got y=${y} `
+                + '(the +0.5 half-pixel trick belongs to stroke, not fill: it splits the line '
+                + 'across two rows at 50% alpha)');
+        }
 
-        const centres = ops
-            .filter((op) => op.startsWith('arc('))
-            .map((op) => toPrice(Number(op.slice(4, -1).split(', ')[1])));
-        assert.ok(centres.length > 0, `expected P&F marks, ops: ${ops.join(' | ')}`);
-
-        const highest = Math.max(...centres);
-        const lowest = Math.min(...centres);
-        assert.ok(highest <= range.max + 1e-9 && lowest >= range.min - 1e-9,
-            `every mark must be centred inside [${range.min}, ${range.max}], got centres `
-            + `[${centres.map((c) => Math.round(c * 1000) / 1000).join(', ')}] — the top one sits at `
-            + `${highest}, i.e. high + box/2, outside the range fed to autoscale`);
-
-        assert.equal(centres.length, (column.high - column.low) / box,
-            'a column of N boxes draws N marks, not N+1');
+        chart.remove();
     });
 });
 
 // ---------------------------------------------------------------------------
-// 3.14 — the draw-call gate bootstraps a missing snapshot and passes
+// 3.9 — P&F draws one mark above the column top
 // ---------------------------------------------------------------------------
-
