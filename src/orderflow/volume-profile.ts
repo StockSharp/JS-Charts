@@ -125,6 +125,12 @@ const POC_TIE_BREAKS = new Set<FootprintPocTieBreak>(Object.values(FootprintPocT
  */
 export class ExactVolumeProfileAccumulator {
     private readonly options: Readonly<VolumeProfileCalculationOptions>;
+    // Everything except the bar being formed, kept apart so that replacing that bar rebuilds
+    // from here instead of subtracting the previous version. Subtraction does not cancel in
+    // binary: a level holding 0.1 from history plus 1e9 from the last bar came back as
+    // 0.10000002384185791 once the 1e9 was taken off, so an incrementally fed profile drifted
+    // away from a batch recalculation of the same bars.
+    private base = new Map<number, MutableProfileLevel>();
     private levels = new Map<number, MutableProfileLevel>();
     private firstTime: number | null = null;
     private lastBar: FootprintBar | null = null;
@@ -138,9 +144,11 @@ export class ExactVolumeProfileAccumulator {
 
     reset(values: readonly FootprintBar[]): ExactVolumeProfile {
         const bars = normalizeFootprintBars(values, this.options);
-        const next = new Map<number, MutableProfileLevel>();
-        for (const bar of bars) applyUpdates(next, preflight(next, deltasForBar(bar, 1)));
-        this.levels = next;
+        const base = new Map<number, MutableProfileLevel>();
+        for (let i = 0; i + 1 < bars.length; i++)
+            applyUpdates(base, preflight(base, deltasForBar(bars[i])));
+        this.base = base;
+        this.levels = withBar(base, bars[bars.length - 1]);
         this.firstTime = bars[0]?.time ?? null;
         this.lastBar = bars[bars.length - 1] ?? null;
         this.count = bars.length;
@@ -152,11 +160,9 @@ export class ExactVolumeProfileAccumulator {
         if (this.lastBar !== null && bar.time < this.lastBar.time)
             throw new RangeError('sschart: volume-profile bar time cannot move backwards');
         const replace = this.lastBar !== null && bar.time === this.lastBar.time;
-        const deltas = new Map<number, LevelDelta>();
-        if (replace) mergeBarDeltas(deltas, this.lastBar as FootprintBar, -1);
-        mergeBarDeltas(deltas, bar, 1);
-        const updates = preflight(this.levels, deltas);
-        applyUpdates(this.levels, updates);
+        if (!replace && this.lastBar !== null)
+            applyUpdates(this.base, preflight(this.base, deltasForBar(this.lastBar)));
+        this.levels = withBar(this.base, bar);
         if (!replace) {
             if (this.firstTime === null) this.firstTime = bar.time;
             this.count++;
@@ -294,17 +300,19 @@ export function calculateDevelopingVolumeProfile(
     return Object.freeze(result);
 }
 
-function deltasForBar(bar: FootprintBar, direction: 1 | -1): Map<number, LevelDelta> {
-    const result = new Map<number, LevelDelta>();
-    mergeBarDeltas(result, bar, direction);
+/** The levels of `base` with `bar` folded in, leaving `base` untouched. */
+function withBar(
+    base: ReadonlyMap<number, MutableProfileLevel>,
+    bar: FootprintBar | undefined,
+): Map<number, MutableProfileLevel> {
+    // A shallow copy is enough: preflight never mutates an entry, it replaces it with a frozen one.
+    const result = new Map(base);
+    if (bar !== undefined) applyUpdates(result, preflight(result, deltasForBar(bar)));
     return result;
 }
 
-function mergeBarDeltas(
-    result: Map<number, LevelDelta>,
-    bar: FootprintBar,
-    direction: 1 | -1,
-): void {
+function deltasForBar(bar: FootprintBar): Map<number, LevelDelta> {
+    const result = new Map<number, LevelDelta>();
     for (const level of bar.levels) {
         let delta = result.get(level.price);
         if (delta === undefined) {
@@ -317,11 +325,12 @@ function mergeBarDeltas(
             };
             result.set(level.price, delta);
         }
-        delta.bidVolume += direction * level.bidVolume;
-        delta.askVolume += direction * level.askVolume;
-        delta.tradeCount += direction * (level.tradeCount ?? 0);
-        delta.missingTradeCounts += direction * (level.tradeCount === undefined ? 1 : 0);
+        delta.bidVolume += level.bidVolume;
+        delta.askVolume += level.askVolume;
+        delta.tradeCount += level.tradeCount ?? 0;
+        delta.missingTradeCounts += level.tradeCount === undefined ? 1 : 0;
     }
+    return result;
 }
 
 function preflight(

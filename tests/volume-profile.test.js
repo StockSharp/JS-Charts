@@ -223,3 +223,56 @@ describe('Volume Profile data availability', () => {
         );
     });
 });
+
+describe('volume-profile incremental replace-last', () => {
+    it('cancels a large last-bar contribution without leaving float residue', () => {
+        // A tiny surviving volume at 100 from the first bar, then a huge contribution from the last
+        // bar at the same price, then a replacement of that last bar that drops the price entirely.
+        const first = {
+            dataMode: OrderFlowDataMode.Exact,
+            time: 60,
+            open: 100,
+            high: 101,
+            low: 100,
+            close: 100,
+            levels: [
+                { price: 100, bidVolume: 0.1, askVolume: 0 },
+                { price: 101, bidVolume: 0, askVolume: 2 },
+            ],
+        };
+        const last = {
+            dataMode: OrderFlowDataMode.Exact,
+            time: 120,
+            open: 100,
+            high: 101,
+            low: 100,
+            close: 101,
+            levels: [
+                { price: 100, bidVolume: 1e9, askVolume: 0 },
+                { price: 101, bidVolume: 0, askVolume: 3 },
+            ],
+        };
+        const replacement = {
+            ...last,
+            levels: [{ price: 101, bidVolume: 0, askVolume: 3 }],
+        };
+
+        const accumulator = new ExactVolumeProfileAccumulator(options);
+        accumulator.reset([first]);
+        accumulator.push(last);
+        const updated = accumulator.push(replacement);
+        const batch = calculateVolumeProfile([first, replacement], options);
+
+        assert.equal(updated.kind, 'update');
+        assert.equal(
+            updated.profile.levels.find(level => level.price === 100).bidVolume,
+            batch.levels.find(level => level.price === 100).bidVolume,
+            'the surviving 0.1 must come back exactly once the last bar stops contributing 1e9',
+        );
+        assert.deepEqual(
+            updated.profile,
+            batch,
+            'incremental replace-last must equal the batch profile for the same bars',
+        );
+    });
+});

@@ -103,9 +103,3 @@ describe('Heikin-Ashi live update', () => {
         );
     });
 });
-
-// ---------------------------------------------------------------------------------------------
-// 2.11 — incremental replace-last must equal a batch recalculation
-// ---------------------------------------------------------------------------------------------
-
-const profileOptions = { tickSize: 1, valueAreaPercentage: 0.7 };
