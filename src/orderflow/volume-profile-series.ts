@@ -202,11 +202,27 @@ function drawExactVolumeProfile(context: ProfileContext): void {
     if (analysis.developing.length > 0) drawDeveloping(context, analysis.developing);
 }
 
+/**
+ * Largest `pick(level)` over the levels, floored at 1.
+ *
+ * A loop rather than Math.max(...array): a dense exact profile accumulates the union of levels over
+ * its whole range without a cap -- unlike TPO, which has maxLevelsPerBar -- and spreading ~130k of
+ * them throws RangeError. A tick size of 0.01 over a $1300 range with dense prints reaches that.
+ */
+function maximumOf<T>(levels: readonly T[], pick: (level: T) => number): number {
+    let max = 1;
+    for (const level of levels) {
+        const value = pick(level);
+        if (Number.isFinite(value) && value > max) max = value;
+    }
+    return max;
+}
+
 function drawHistogram(context: ProfileContext, profile: ReadyExactVolumeProfile): void {
     const { target: ctx, options, pane } = context;
     const maximumWidth = pane.width * options.profileWidth;
-    const maximumTotal = Math.max(...profile.levels.map(level => level.totalVolume), 1);
-    const maximumDelta = Math.max(...profile.levels.map(level => Math.abs(level.delta)), 1);
+    const maximumTotal = maximumOf(profile.levels, level => level.totalVolume);
+    const maximumDelta = maximumOf(profile.levels, level => Math.abs(level.delta));
     const reference = profile.levels[Math.floor(profile.levels.length / 2)].price;
     const cellHeight = Math.max(1, Math.abs(
         context.priceToCoordinate(reference + options.tickSize / 2)

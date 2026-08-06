@@ -173,10 +173,10 @@ function drawLevels(
     const { target: ctx, options } = context;
     const center = context.timeToCoordinate(bar.time);
     const left = center - width / 2;
-    const maximumBid = Math.max(...metrics.levels.map(level => level.bidVolume), 1);
-    const maximumAsk = Math.max(...metrics.levels.map(level => level.askVolume), 1);
-    const maximumTotal = Math.max(...metrics.levels.map(level => level.totalVolume), 1);
-    const maximumDelta = Math.max(...metrics.levels.map(level => Math.abs(level.delta)), 1);
+    const maximumBid = maximumOf(metrics.levels, level => level.bidVolume);
+    const maximumAsk = maximumOf(metrics.levels, level => level.askVolume);
+    const maximumTotal = maximumOf(metrics.levels, level => level.totalVolume);
+    const maximumDelta = maximumOf(metrics.levels, level => Math.abs(level.delta));
     const showNumbers = detail === FootprintDetailLevel.Numbers;
     if (showNumbers) {
         ctx.font = `${options.fontSize}px ${context.theme.fontFamily}`;
@@ -413,6 +413,22 @@ function volumeText(value: number): string {
 function compact(value: number, suffix: string): string {
     const precision = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
     return `${value.toFixed(precision).replace(/\.0+$|([.][0-9])0+$/, '$1')}${suffix}`;
+}
+
+/**
+ * Largest `pick(level)` over the levels, floored at 1.
+ *
+ * A loop rather than Math.max(...array): a dense exact profile accumulates the union of levels over
+ * its whole range without a cap -- unlike TPO, which has maxLevelsPerBar -- and spreading ~130k of
+ * them throws RangeError. A tick size of 0.01 over a $1300 range with dense prints reaches that.
+ */
+function maximumOf<T>(levels: readonly T[], pick: (level: T) => number): number {
+    let max = 1;
+    for (const level of levels) {
+        const value = pick(level);
+        if (Number.isFinite(value) && value > max) max = value;
+    }
+    return max;
 }
 
 function footprintPriceRange(data: readonly FootprintBar[]): SeriesPriceRange | null {
