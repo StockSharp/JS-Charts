@@ -30,7 +30,13 @@ export class ChartTypeSwitcher {
     _volumeSeries: any;
     _rawCandles: ChartTypeSwitcherCandle[];
     _derivedRuntime: RenkoDataRuntime | PointFigureDataRuntime | null;
+    /** HA pair of the last CLOSED bar -- the only legitimate seed for the next bar's open. */
     _lastHA: { open: number; close: number } | null = null;
+    /** Time of the bar currently being formed, so a replacing tick is told apart from a new bar. */
+    _lastHATime: number | null = null;
+    _currentHAOpen: number | null = null;
+    _currentHAClose: number | null = null;
+    _openOfClosedBar: number | null = null;
 
     constructor() {
         this._chart = null;
@@ -194,13 +200,27 @@ export class ChartTypeSwitcher {
             this._currentSeries.update(candle);
             if (type === 'renko' || type === 'pf') this._derivedRuntime?.update(candle);
         } else if (type === 'heikin') {
-            // Approximate HA update using last raw candle
+            // haOpen is fixed for the whole bar at (prevBar.haOpen + prevBar.haClose) / 2, so the
+            // state advanced here has to be the last CLOSED bar. Deriving it from _lastHA on every
+            // call meant a live feed -- which mostly replaces the current bar rather than appending
+            // -- computed each tick's open from the same bar's previous tick, walking the open
+            // towards the close, and the corrupted pair then seeded every bar after it.
             const haClose = (candle.open + candle.high + candle.low + candle.close) / 4;
-            const prev = this._lastHA || { open: candle.open, close: candle.close };
-            const haOpen = (prev.open + prev.close) / 2;
+            const isNewBar = this._lastHATime === null || candle.time !== this._lastHATime;
+            if (isNewBar) {
+                const prev = this._lastHA || { open: candle.open, close: candle.close };
+                this._currentHAOpen = (prev.open + prev.close) / 2;
+                if (this._lastHATime !== null && this._currentHAClose !== null && this._currentHAOpen !== null) {
+                    // The bar that just closed becomes the seed for the next one.
+                    this._lastHA = { open: this._openOfClosedBar ?? this._currentHAOpen, close: this._currentHAClose };
+                }
+                this._openOfClosedBar = this._currentHAOpen;
+                this._lastHATime = candle.time;
+            }
+            const haOpen = this._currentHAOpen ?? candle.open;
             const haHigh = Math.max(candle.high, haOpen, haClose);
             const haLow = Math.min(candle.low, haOpen, haClose);
-            this._lastHA = { open: haOpen, close: haClose };
+            this._currentHAClose = haClose;
             this._currentSeries.update({ time: candle.time, open: haOpen, high: haHigh, low: haLow, close: haClose });
         } else {
             this._currentSeries.update({ time: candle.time, value: candle.close });
@@ -223,7 +243,17 @@ export class ChartTypeSwitcher {
             prevClose = haClose;
         }
 
-        this._lastHA = { open: prevOpen, close: prevClose };
+        // Seed from the last bar in the history and remember which bar it was, so the first live
+        // tick that replaces that same bar is recognised as a replacement rather than treated as
+        // its own predecessor.
+        const lastBar = result[result.length - 1];
+        this._lastHA = result.length > 1
+            ? { open: result[result.length - 2].open, close: result[result.length - 2].close }
+            : { open: prevOpen, close: prevClose };
+        this._lastHATime = lastBar ? lastBar.time : null;
+        this._openOfClosedBar = lastBar ? lastBar.open : null;
+        this._currentHAOpen = lastBar ? lastBar.open : null;
+        this._currentHAClose = lastBar ? lastBar.close : null;
         return result;
     }
 }
