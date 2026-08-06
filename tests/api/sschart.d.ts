@@ -6035,6 +6035,7 @@ export interface DevelopingVolumeProfilePoint {
  */
 export declare class ExactVolumeProfileAccumulator {
     private readonly options;
+    private base;
     private levels;
     private firstTime;
     private lastBar;
@@ -6267,6 +6268,13 @@ export interface NativeChartLayoutAdapterOptions {
     /** Overrides registry-based empty-series recreation (for host data-source wiring). */
     readonly createSeries?: (series: PersistedSeries, pane: IPaneApi) => MaybePromise<ISeriesApi<any, any> | null | void>;
     readonly includeSeries?: (series: ISeriesApi<any, any>) => boolean;
+    /**
+     * Called for a series that `capture()` deliberately skipped -- `persist: false`, or vetoed by
+     * `includeSeries` -- and that `restore()` still had to detach because the pane holding it is
+     * not part of the layout being restored. Series the adapter owns are never reported: taking
+     * them down and building them again is what `restore()` is for.
+     */
+    readonly onRemoveSeries?: (series: ISeriesApi<any, any>) => void;
     readonly onUnknownSeries?: (series: PersistedSeries) => void;
 }
 /** Captures native pane/series metadata while deliberately excluding raw series data. */
@@ -6275,9 +6283,11 @@ export declare class NativeChartLayoutAdapter implements ChartStateLayoutAdapter
     private readonly mainPaneId;
     private readonly createSeries?;
     private readonly includeSeries?;
+    private readonly onRemoveSeries?;
     private readonly onUnknownSeries?;
     constructor(options: NativeChartLayoutAdapterOptions);
     capture(): ChartStateLayoutSnapshot;
+    private isOwned;
     restore(state: ChartStateLayoutSnapshot): Promise<void>;
     private capturePane;
 }

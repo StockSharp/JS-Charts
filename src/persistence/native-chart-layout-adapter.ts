@@ -31,6 +31,13 @@ export interface NativeChartLayoutAdapterOptions {
         pane: IPaneApi,
     ) => MaybePromise<ISeriesApi<any, any> | null | void>;
     readonly includeSeries?: (series: ISeriesApi<any, any>) => boolean;
+    /**
+     * Called for a series that `capture()` deliberately skipped -- `persist: false`, or vetoed by
+     * `includeSeries` -- and that `restore()` still had to detach because the pane holding it is
+     * not part of the layout being restored. Series the adapter owns are never reported: taking
+     * them down and building them again is what `restore()` is for.
+     */
+    readonly onRemoveSeries?: (series: ISeriesApi<any, any>) => void;
     readonly onUnknownSeries?: (series: PersistedSeries) => void;
 }
 
@@ -40,6 +47,7 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
     private readonly mainPaneId: string;
     private readonly createSeries?: NativeChartLayoutAdapterOptions['createSeries'];
     private readonly includeSeries?: NativeChartLayoutAdapterOptions['includeSeries'];
+    private readonly onRemoveSeries?: NativeChartLayoutAdapterOptions['onRemoveSeries'];
     private readonly onUnknownSeries?: NativeChartLayoutAdapterOptions['onUnknownSeries'];
 
     constructor(options: NativeChartLayoutAdapterOptions) {
@@ -50,6 +58,7 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
         for (const [name, callback] of [
             ['createSeries', options.createSeries],
             ['includeSeries', options.includeSeries],
+            ['onRemoveSeries', options.onRemoveSeries],
             ['onUnknownSeries', options.onUnknownSeries],
         ] as const) {
             if (callback !== undefined && typeof callback !== 'function')
@@ -65,6 +74,7 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
             ?? (panes.some(pane => pane.id() === 'main') ? 'main' : panes[0]?.id() ?? 'main');
         this.createSeries = options.createSeries;
         this.includeSeries = options.includeSeries;
+        this.onRemoveSeries = options.onRemoveSeries;
         this.onUnknownSeries = options.onUnknownSeries;
     }
 
@@ -74,8 +84,8 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
         const series: PersistedSeries[] = [];
         for (const pane of panes) {
             for (const item of pane.series()) {
+                if (!this.isOwned(item)) continue;
                 const rawOptions = item.options() as Readonly<Record<string, unknown>>;
-                if (rawOptions.persist === false || this.includeSeries?.(item) === false) continue;
                 const { id: _id, persist: _persist, priceScaleId: _scale, ...styleOptions } = rawOptions;
                 series.push(Object.freeze({
                     id: item.id(),
@@ -94,6 +104,13 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
         });
     }
 
+    // A series is the adapter's own unless the caller said otherwise, by the same rule capture()
+    // and restore() both answer to -- they must agree, or restore removes what capture skipped.
+    private isOwned(series: ISeriesApi<any, any>): boolean {
+        const options = series.options() as Readonly<Record<string, unknown>>;
+        return options.persist !== false && this.includeSeries?.(series) !== false;
+    }
+
     async restore(state: ChartStateLayoutSnapshot): Promise<void> {
         if (state === null || typeof state !== 'object')
             throw new TypeError('sschart: native chart layout restore state is required');
@@ -110,8 +127,18 @@ export class NativeChartLayoutAdapter implements ChartStateLayoutAdapter {
         }
 
         this.chart.applyOptions(state.chartOptions as unknown as ChartOptions);
+        // Mirror the capture filter: a series capture() called none of its business must not be
+        // torn down here either, or a controller that owns one -- a compare overlay, created with
+        // persist:false -- keeps streaming into a series no chart holds any more, while the legend
+        // still lists the instrument. Only the main pane survives a restore, so a foreign series
+        // on any other pane has nowhere to stay; that one is detached and reported.
         for (const pane of current) {
-            for (const series of [...pane.series()]) this.chart.removeSeries(series);
+            for (const series of [...pane.series()]) {
+                const owned = this.isOwned(series);
+                if (!owned && pane === main) continue;
+                this.chart.removeSeries(series);
+                if (!owned) this.onRemoveSeries?.(series);
+            }
         }
         for (const pane of [...current].reverse()) {
             if (pane !== main) this.chart.removePane(pane);

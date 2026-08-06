@@ -189,4 +189,40 @@ describe('NativeChartLayoutAdapter', () => {
         assert.deepEqual(chart.panes().map(item => item.id()), ['study', 'main']);
         assert.equal(chart.panes().find(item => item.id() === 'main'), main);
     });
+
+    it('leaves the series capture() skipped attached, and reports the ones it must detach', async () => {
+        const { chart, main, study } = setupChart();
+        // A CompareController overlay: created with persist:false, owned and streamed by its host.
+        const compare = fakeSeries('compare-MSFT', 'Line', { priceScaleId: 'right', persist: false });
+        main._series.push(compare);
+        // Same promise through the other mechanism -- a host veto.
+        const vetoed = fakeSeries('vetoed', 'Line', { priceScaleId: 'right' });
+        main._series.push(vetoed);
+        const onStudy = study._series.find(item => item.id() === 'rsi-output');
+        const detached = [];
+        const adapter = new NativeChartLayoutAdapter({
+            chart,
+            includeSeries: series => series.id() !== 'vetoed',
+            onRemoveSeries: series => detached.push(series.id()),
+        });
+
+        const snapshot = adapter.capture();
+        assert.deepEqual(
+            snapshot.series.map(item => item.id),
+            ['price'],
+            'capture() treats persist:false and vetoed series as not its own',
+        );
+
+        await adapter.restore(snapshot);
+
+        const survivors = chart.panes().flatMap(item => item.series());
+        assert.ok(survivors.includes(compare),
+            'a persist:false overlay on the main pane must survive a restore that never captured it');
+        assert.ok(survivors.includes(vetoed),
+            'a vetoed series on the main pane must survive a restore that never captured it');
+        assert.ok(!survivors.includes(onStudy),
+            'a pane other than main is rebuilt, so a series on it cannot stay attached');
+        assert.deepEqual(detached, ['rsi-output'],
+            'the owner of a skipped series hears about the detach it could not be spared');
+    });
 });
