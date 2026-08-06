@@ -1,7 +1,4 @@
-// Failing-by-design proofs for AUDIT.md findings 1.4, 2.11, 3.10 and 3.11.
-//
-// Every assertion here states the behaviour the audit says is owed, so each one stays red until the
-// corresponding defect is fixed. Nothing in src/ is touched and no existing test file is modified.
+// The footprint metrics cache is bounded: a long session must not accumulate one entry per bar.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
@@ -18,10 +15,6 @@ const {
     defaultExactVolumeProfileSeriesOptions,
     defaultFootprintSeriesOptions,
 } = require('../src/orderflow/index.js');
-
-// ---------------------------------------------------------------------------------------------
-// 1.4 вЂ” Heikin-Ashi live update must keep haOpen fixed for the whole bar
-// ---------------------------------------------------------------------------------------------
 
 function seriesMock() {
     return {
@@ -60,10 +53,6 @@ function canonicalHeikinAshi(candles) {
     }
     return result;
 }
-
-// ---------------------------------------------------------------------------------------------
-// 3.10 вЂ” the footprint metrics cache must be bounded
-// ---------------------------------------------------------------------------------------------
 
 function silentCanvas() {
     const noop = () => { };
@@ -134,7 +123,7 @@ function drawFootprint(bar, imbalanceRatio) {
     });
 }
 
-describe('AUDIT 3.10 вЂ” footprint metrics cache', () => {
+describe('footprint metrics cache', () => {
     it('does not retain every options combination ever applied to a bar', () => {
         const { bar, metricsCalculations } = countingFootprintBar();
         const combinations = 2000;
@@ -162,8 +151,4 @@ describe('AUDIT 3.10 вЂ” footprint metrics cache', () => {
         );
     });
 });
-
-// ---------------------------------------------------------------------------------------------
-// 3.11 вЂ” a dense volume profile must still render
-// ---------------------------------------------------------------------------------------------
 

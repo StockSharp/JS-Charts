@@ -1,12 +1,5 @@
-// Failing-by-design proofs for the lifecycle findings of AUDIT.md:
-//   1.1  the per-pane ctx.save()+clip() block in drawBase/drawOverlay has no try/finally
-//   3.4  public methods stay silently usable after chart.remove()
-//   3.6  ChartLegend has no teardown at all
-//   3.7  window._chartPaneManager is a global dispose() never clears
-//   3.12 trading-layer publish() drops the pending intent when ANY handler throws
-//
-// Every assertion states the behaviour the audit says is owed, so each one goes red while the
-// defect is alive and green the moment it is fixed. Nothing here pins current behaviour.
+// A primitive or renderer that throws must not strand a save()+clip() on the shared context, which
+// would leave every later frame drawing inside a clip nobody asked for.
 
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');

@@ -1,7 +1,4 @@
-// Failing-by-design proofs for the render findings of AUDIT.md (2.1, 2.2, 3.1, 3.9, 3.14).
-//
-// Every assertion below states the behaviour the audit says is owed, so each one goes red while
-// the defect lives and green the moment it is fixed. Nothing here pins current behaviour.
+// A marker positioned inBar is centred on its price, not offset like the below-bar ones.
 
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');

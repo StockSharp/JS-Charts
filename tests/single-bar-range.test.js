@@ -1,9 +1,5 @@
-// Failing-by-design proofs for AUDIT.md findings 1.2, 1.3, 2.3, 2.9 and 2.16.
-//
-// Every assertion states the behaviour the audit says is owed, so each one stays red until the
-// corresponding defect is fixed. Nothing under src/ is touched and no existing spec is edited.
-// Each finding is paired with a control — the same fixture one step away from the trigger — so a
-// red here cannot be blamed on the fixture.
+// A series holding a single bar still produces a usable time range: the first candle of a history,
+// or the first tick into an empty series, must not leave the chart blank.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');

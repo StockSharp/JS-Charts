@@ -1,9 +1,5 @@
-// Failing-by-design proofs for AUDIT.md findings 1.2, 1.3, 2.3, 2.9 and 2.16.
-//
-// Every assertion states the behaviour the audit says is owed, so each one stays red until the
-// corresponding defect is fixed. Nothing under src/ is touched and no existing spec is edited.
-// Each finding is paired with a control — the same fixture one step away from the trigger — so a
-// red here cannot be blamed on the fixture.
+// clampVisibleRange delivers the exact window the model computes -- pinned by value, because a
+// range predicate is satisfied by the untouched window a silent no-op would leave behind.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');

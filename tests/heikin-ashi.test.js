@@ -1,7 +1,5 @@
-// Failing-by-design proofs for AUDIT.md findings 1.4, 2.11, 3.10 and 3.11.
-//
-// Every assertion here states the behaviour the audit says is owed, so each one stays red until the
-// corresponding defect is fixed. Nothing in src/ is touched and no existing test file is modified.
+// Heikin-Ashi streaming: the open of the bar being formed stays put, so a live feed and a full
+// recalculation of the same candles agree.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
