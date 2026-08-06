@@ -44,6 +44,19 @@ function sourceStep(source: readonly OhlcData[]): number {
     return 1;
 }
 
+/**
+ * Width of the range to size a box from when the source has none of its own -- an empty reset, or a
+ * single flat bar, which is the ordinary start of a live stream.
+ *
+ * The constant 1 that used to stand here made the box an absolute 0.025 regardless of the
+ * instrument: a 15-point move on something priced at 6000 produced 600 bricks in one update, and an
+ * instrument priced at 0.0001 produced none at all. A fraction of the price is scale-free, so the
+ * fallback stays proportionate to whatever is being charted.
+ */
+function fallbackRange(reference: number): number {
+    return Number.isFinite(reference) && reference > 0 ? reference * 0.02 : 1;
+}
+
 function renkoBox(source: readonly OhlcData[], requested?: number): number {
     if (finite(requested, 0) > 0) return requested as number;
     let low = Infinity;
@@ -52,7 +65,10 @@ function renkoBox(source: readonly OhlcData[], requested?: number): number {
         low = Math.min(low, point.close);
         high = Math.max(high, point.close);
     }
-    return ((Number.isFinite(high - low) && high > low) ? high - low : 1) / 40;
+    const range = (Number.isFinite(high - low) && high > low)
+        ? high - low
+        : fallbackRange(source.length > 0 ? source[source.length - 1].close : Number.NaN);
+    return range / 40;
 }
 
 function pointFigureBox(source: readonly OhlcData[], requested?: number): number {
@@ -63,7 +79,10 @@ function pointFigureBox(source: readonly OhlcData[], requested?: number): number
         low = Math.min(low, point.low);
         high = Math.max(high, point.high);
     }
-    return ((Number.isFinite(high - low) && high > low) ? high - low : 1) / 50;
+    const range = (Number.isFinite(high - low) && high > low)
+        ? high - low
+        : fallbackRange(source.length > 0 ? source[source.length - 1].close : Number.NaN);
+    return range / 50;
 }
 
 function samePoint(left: OhlcData, right: OhlcData): boolean {

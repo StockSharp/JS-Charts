@@ -25,7 +25,7 @@ function probe(label, call) {
     }
 }
 
-describe('audit 2.10 — auto box size for Renko / Point & Figure ignores the price scale', () => {
+describe('auto box size for Renko / Point & Figure follows the price scale', () => {
     it('scales the fallback box to the instrument price on a single-bar reset', () => {
         const bar = (time, close) => ({ time, open: close, high: close, low: close, close });
 
