@@ -1142,6 +1142,39 @@ interface PrimitiveRoute {
     priceScaleId: string;
 }
 
+/** Groups whose members are patched independently, so a patch must not replace the whole group. */
+const DEEP_OPTION_GROUPS: ReadonlySet<string> = new Set([
+    'layout', 'grid', 'watermark', 'crosshair', 'rightPriceScale', 'leftPriceScale', 'localization',
+]);
+
+/**
+ * One level of structural merge for the known groups, then plain replacement.
+ *
+ * Deliberately not a general deep merge: option values that happen to be objects but are meant to be
+ * replaced wholesale -- a colour stop list, a formatter config -- would be silently combined instead.
+ */
+function mergeOptionGroups(
+    current: Record<string, unknown>,
+    patch: Record<string, unknown>,
+    deep: boolean,
+): Record<string, unknown> {
+    // Start from what is already there, so members the patch does not mention survive.
+    const result: Record<string, unknown> = { ...current };
+    for (const [key, value] of Object.entries(patch)) {
+        const existing = current[key];
+        const mergeable = (deep || DEEP_OPTION_GROUPS.has(key))
+            && isPlainOptionObject(existing) && isPlainOptionObject(value);
+        result[key] = mergeable
+            ? mergeOptionGroups(existing as Record<string, unknown>, value as Record<string, unknown>, true)
+            : value;
+    }
+    return result;
+}
+
+function isPlainOptionObject(value: unknown): boolean {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 class ChartImpl implements IChartApi {
     private readonly host: HTMLElement;
     private readonly root: HTMLDivElement;
@@ -1859,7 +1892,11 @@ class ChartImpl implements IChartApi {
         const timeScale = patch.timeScale === undefined
             ? undefined
             : normalizeTimeScaleOptions({ ...this.opts.timeScale, ...patch.timeScale });
-        Object.assign(this.opts, patch);
+        // Deep-merge the option groups, the way timeScale above already is. Object.assign replaced a
+        // whole group with the patch, so applyOptions({grid:{horzLines:{visible:false}}}) erased
+        // vertLines and the colour of horzLines itself -- and the file's own advice to toggle
+        // crosshair.horzLine.visible during an order drag silently reset the rest of the crosshair.
+        Object.assign(this.opts, mergeOptionGroups(this.opts as Record<string, unknown>, patch as Record<string, unknown>, false));
         if (timeScale !== undefined) {
             this.opts.timeScale = timeScale;
             this.sessionProjectionCache = null;
