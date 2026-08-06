@@ -97,10 +97,10 @@ function mountRecording(options) {
 }
 
 // ---------------------------------------------------------------------------
-// 2.1 — 'inBar' is drawn through the belowBar branch
+// 2.1 вЂ” 'inBar' is drawn through the belowBar branch
 // ---------------------------------------------------------------------------
 
-describe('AUDIT 3.9 — Point & Figure column marks', () => {
+describe('AUDIT 3.9 вЂ” Point & Figure column marks', () => {
     it('keeps every mark inside the [low, high] the same definition reports to autoscale', () => {
         const definition = builtInSeriesDefinitions.find((d) => d.type === 'PointFigure');
         assert.ok(definition, 'PointFigure definition must exist');
@@ -141,7 +141,7 @@ describe('AUDIT 3.9 — Point & Figure column marks', () => {
         const lowest = Math.min(...centres);
         assert.ok(highest <= range.max + 1e-9 && lowest >= range.min - 1e-9,
             `every mark must be centred inside [${range.min}, ${range.max}], got centres `
-            + `[${centres.map((c) => Math.round(c * 1000) / 1000).join(', ')}] — the top one sits at `
+            + `[${centres.map((c) => Math.round(c * 1000) / 1000).join(', ')}] вЂ” the top one sits at `
             + `${highest}, i.e. high + box/2, outside the range fed to autoscale`);
 
         assert.equal(centres.length, (column.high - column.low) / box,
@@ -150,6 +150,5 @@ describe('AUDIT 3.9 — Point & Figure column marks', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3.14 — the draw-call gate bootstraps a missing snapshot and passes
+// 3.14 вЂ” the draw-call gate bootstraps a missing snapshot and passes
 // ---------------------------------------------------------------------------
-

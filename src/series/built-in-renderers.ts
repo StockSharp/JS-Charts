@@ -192,7 +192,10 @@ function drawPointFigure(c: Context): void {
         const center = c.timeToCoordinate(point.time);
         const rising = point.close! >= point.open!;
         ctx.strokeStyle = rising ? (o.upColor ?? '#00c853') : (o.downColor ?? '#ff3d57');
-        for (let value = point.low!; value <= point.high! + 1e-6; value += box) {
+        // The loop is inclusive of high and each mark is centred half a box above its value, so the
+        // last mark sat at high + box/2 -- outside the [low, high] the same definition reports to
+        // autoscale. Stop a box short: the final mark centres on high - box/2, inside the column.
+        for (let value = point.low!; value <= point.high! - box + 1e-6; value += box) {
             const y = c.priceToCoordinate(value + box / 2);
             ctx.beginPath();
             if (rising) {
