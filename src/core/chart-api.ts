@@ -2612,7 +2612,14 @@ class ChartImpl implements IChartApi {
             if (pane === undefined) continue;
             this.activatePane(pane, rect);
             const last = index === visible.length - 1;
+            // try/finally, because everything between here and the restore can throw: primitive
+            // paneViews()/zOrder() are host code called unguarded, autoscale runs host callbacks,
+            // and renderer.draw re-throws on purpose. Without it one exception leaves the shared
+            // context with an unbalanced save and this pane's clip still applied, and every later
+            // frame -- including its full-canvas clearRect -- draws inside that stale clip until a
+            // resize happens to rebuild the context.
             ctx.save();
+            try {
             ctx.beginPath();
             ctx.rect(rect.x, rect.y, rect.width, rect.height + (last ? this.padB : 0));
             ctx.clip();
@@ -2651,7 +2658,9 @@ class ChartImpl implements IChartApi {
             this.drawPriceTags(rb, lb);
             this.drawPrimitivePriceAxisViews(paneApi);
             if (last) this.drawPrimitiveTimeAxisViews();
-            ctx.restore();
+            } finally {
+                ctx.restore();
+            }
         }
 
         ctx.fillStyle = this.opts.rightPriceScale?.borderColor ?? DEF_BORDER;
@@ -2806,7 +2815,10 @@ class ChartImpl implements IChartApi {
             if (pane === undefined) continue;
             this.activatePane(pane, rect);
             const last = index === visible.length - 1;
+            // Same reasoning as drawBase: the overlay layer also calls host primitives between
+            // the clip and the restore.
             ctx.save();
+            try {
             ctx.beginPath();
             ctx.rect(rect.x, rect.y, rect.width, rect.height + (last ? this.padB : 0));
             ctx.clip();
@@ -2824,7 +2836,9 @@ class ChartImpl implements IChartApi {
             this.drawPrimitivePaneViews(paneApi, primitiveTarget, PrimitiveZOrder.Top);
             this.drawCrosshair(rb, lb, last);
             this.drawClusterTip(rb, lb);
-            ctx.restore();
+            } finally {
+                ctx.restore();
+            }
         }
         this.activatePane(this.model.mainPane);
         this.ctx = this.baseCtx;
