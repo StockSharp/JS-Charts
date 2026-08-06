@@ -260,3 +260,55 @@ describe('TradingLayer intents', () => {
         );
     });
 });
+
+describe('publish() keeps an intent the broker already acted on', () => {
+    it('keeps it pending and resolvable when a later handler throws', () => {
+        const trading = new TradingLayer({
+            tickSize: 0.01,
+            quantityStep: 0.1,
+            clock: () => 1700000000,
+            intentIdFactory: (sequence) => `intent-${sequence}`,
+        });
+        trading.setOrders([{
+            id: 'a',
+            revision: 1,
+            side: TradingSide.Buy,
+            type: ChartOrderType.Limit,
+            status: ChartOrderStatus.Working,
+            timeInForce: ChartOrderTimeInForce.GoodTillCancelled,
+            quantity: 10,
+            filledQuantity: 0,
+            price: 100,
+            permissions: { canModify: true, canCancel: true },
+        }]);
+
+        const outcomes = [];
+        trading.subscribeIntentOutcomes((outcome) => outcomes.push(outcome));
+
+        // First handler: the broker bridge. It sends the order to the venue — that side effect
+        // cannot be rolled back by anyone downstream.
+        const sent = [];
+        trading.subscribeIntents((intent) => sent.push(intent));
+        // Second handler: a logger that happens to be broken.
+        trading.subscribeIntents(() => { throw new Error('logger exploded'); });
+
+        assert.throws(() => trading.requestModifyOrder('a', { price: 101 }), /logger exploded/,
+            'the handler failure is still reported to the caller');
+        assert.equal(sent.length, 1, 'sanity: the broker handler ran and the order is in flight');
+
+        assert.deepStrictEqual(
+            trading.pendingIntents().map((intent) => intent.intentId),
+            [sent[0].intentId],
+            'an intent that reached a handler is in flight: a later handler throwing cannot unsend '
+            + 'it, so it must stay pending and remain resolvable',
+        );
+
+        assert.doesNotThrow(() => trading.resolveIntent({
+            intentId: sent[0].intentId,
+            status: TradingIntentOutcomeStatus.Accepted,
+        }), 'the host must be able to resolve the intent the broker already acted on');
+        assert.equal(outcomes.length, 1, 'resolving it emits exactly one outcome');
+
+        trading.dispose();
+    });
+});

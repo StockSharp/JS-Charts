@@ -600,10 +600,19 @@ export class TradingLayer implements ITradingLayer {
             throw new RangeError(`sschart: duplicate pending trading intent '${intent.intentId}'`);
         }
         this.pendingIntentMap.set(intent.intentId, intent);
+        // Rolling the intent back is only correct while nobody has seen it. Once a handler has
+        // returned, the broker bridge may already have sent the order, and a later handler throwing
+        // -- a logger, a metrics hook -- cannot unsend it. Deleting the intent there left an order
+        // live at the venue that resolveIntent() then refused with "unknown pending trading
+        // intent", so its TradingIntentOutcome was never emitted.
+        let delivered = 0;
         try {
-            for (const handler of [...this.intentHandlers]) handler(intent);
+            for (const handler of [...this.intentHandlers]) {
+                handler(intent);
+                delivered += 1;
+            }
         } catch (error) {
-            this.pendingIntentMap.delete(intent.intentId);
+            if (delivered === 0) this.pendingIntentMap.delete(intent.intentId);
             throw error;
         }
         return intent;
