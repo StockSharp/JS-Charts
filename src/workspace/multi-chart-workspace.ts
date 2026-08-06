@@ -509,7 +509,13 @@ export class MultiChartWorkspace {
                 if (target === source || sameRange(target.visibleRange, range)) continue;
                 try {
                     target.cell.chart.timeScale().setVisibleRange(range);
-                    target.visibleRange = freezeRange(range);
+                    // Read back rather than record what was asked for: a target clamps the range to
+                    // the data it holds, so a five-year window sent to a chart with three months of
+                    // history shows three months. Storing the request made cells() publish a range
+                    // nobody displayed, and made the sameRange guard skip the next sync as already
+                    // applied. The read-back is not redundant with the change event -- nothing in
+                    // the time-scale contract promises setVisibleRange emits synchronously.
+                    target.visibleRange = freezeRange(target.cell.chart.timeScale().getVisibleRange());
                 }
                 catch (error) { this.recordError(target.id, WorkspaceSyncErrorKind.Range, error); }
             }

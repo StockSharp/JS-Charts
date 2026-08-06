@@ -70,7 +70,13 @@ function chartDouble(options = {}) {
         getVisibleRange: () => visibleRange,
         setVisibleRange(range) {
             if (options.rangeError) throw options.rangeError;
-            visibleRange = { ...range };
+            // clampTo models a chart that holds less history than it is asked to show: a real
+            // time scale narrows the request to the data it has.
+            const bounds = options.clampTo;
+            visibleRange = bounds === undefined ? { ...range } : {
+                from: Math.max(range.from, bounds.from),
+                to: Math.min(range.to, bounds.to),
+            };
             rangeWrites.push(visibleRange);
             for (const listener of rangeListeners) listener(visibleRange);
         },
@@ -108,6 +114,7 @@ function chartDouble(options = {}) {
             for (const listener of crosshairListeners) listener({ time });
         },
         removeCount: () => removeCount,
+        actualRange: () => visibleRange,
     };
 }
 
@@ -340,5 +347,30 @@ describe('MultiChartWorkspace', () => {
         assert.equal(charts[1].removeCount(), 1);
         assert.equal(container.style.display, 'block');
         assert.equal(container.style.gap, '4px');
+    });
+
+    it('publishes the clamped range a target reported, not the range it was asked for', () => {
+        // The source holds five years, the target three months.
+        const bounds = { from: 150_000_000, to: 158_000_000 };
+        const { workspace, created } = workspaceDouble({
+            count: 2,
+            sync: { range: true },
+            chartOptions: [
+                { visibleRange: { from: 1_000, to: 158_000_000 } },
+                { visibleRange: { ...bounds }, clampTo: bounds },
+            ],
+        });
+
+        created[0].chart.emitRange({ from: 1_000, to: 158_000_000 });
+
+        const shown = created[1].chart.actualRange();
+        assert.deepEqual(shown, bounds, 'the target clamps the requested range to its data');
+        assert.deepEqual(
+            workspace.cells()[1].visibleRange,
+            shown,
+            'the workspace must publish the range the target actually shows',
+        );
+        assert.deepEqual(workspace.snapshot().cells[1].visibleRange, shown);
+        workspace.dispose();
     });
 });
