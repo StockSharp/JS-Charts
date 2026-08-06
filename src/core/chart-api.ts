@@ -2537,7 +2537,10 @@ class ChartImpl implements IChartApi {
         if (priceValue === undefined) return null;
         for (const point of points) {
             const value = priceValue(point, series.opts);
-            if (value !== null && Number.isFinite(value) && value > 0) return value;
+            // Any finite non-zero value, of either sign. Accepting only positives left a series
+            // that never rises above zero with no reference at all, so it was skipped by autoscale
+            // and drawn against the fallback base of 1.
+            if (value !== null && Number.isFinite(value) && value !== 0) return value;
         }
         return null;
     }

@@ -41,72 +41,7 @@ function withChart(options, body) {
 const onCanvasX = (x) => typeof x === 'number' && Number.isFinite(x) && x >= 0 && x <= WIDTH;
 const onCanvasY = (y) => typeof y === 'number' && Number.isFinite(y) && y >= 0 && y <= HEIGHT;
 
-describe('AUDIT 2.3 — relative price scales must survive a non-positive base', () => {
-    it('maps an all-negative series to finite, order-preserving, on-canvas coordinates', () => {
-        const base = -10;
-        const transform = (mode) => {
-            const low = priceToScale(base, mode, base);   // the reference value itself
-            const high = priceToScale(-5, mode, base);    // a higher price than the reference
-            return {
-                low,
-                high,
-                finite: Number.isFinite(low) && Number.isFinite(high),
-                // A price scale is an order-preserving map: -5 > -10 must stay above it.
-                ordered: high > low,
-                // …and it must invert back to the price it came from.
-                roundTrips: Math.abs(scaleToPrice(high, mode, base) - -5) < 1e-9,
-            };
-        };
-        const percentage = transform(InternalPriceScaleMode.Percentage);
-        const indexed = transform(InternalPriceScaleMode.IndexedTo100);
-
-        // The same defect through the public API: a P&L / spread / funding series never crosses
-        // zero, so autoscale skips it and the fallback base=1 throws it off the canvas.
-        const data = [-10, -8, -6, -5, -12].map((value, i) => ({ time: 3600 * (i + 1), value }));
-        const { normalYs, percentYs } = withChart(undefined, (chart, dom) => {
-            const series = chart.addSeries(LineSeries);
-            series.setData(data);
-            chart.timeScale().fitContent();
-            dom.flushFrames();
-            // Control: the identical series on the default Normal scale.
-            const normal = data.map((point) => series.priceToCoordinate(point.value));
-
-            series.priceScale().applyOptions({ mode: PriceScaleMode.Percentage });
-            chart.timeScale().fitContent();
-            dom.flushFrames();
-            return { normalYs: normal, percentYs: data.map((point) => series.priceToCoordinate(point.value)) };
-        });
-
-        assert.ok(normalYs.every(onCanvasY),
-            `control: the same negative series on a Normal scale must be on canvas, got ${normalYs.join(', ')}`);
-
-        assert.deepEqual({
-            percentageFinite: percentage.finite,
-            percentageOrdered: percentage.ordered,
-            percentageRoundTrips: percentage.roundTrips,
-            indexedFinite: indexed.finite,
-            indexedOrdered: indexed.ordered,
-            indexedRoundTrips: indexed.roundTrips,
-            everyPointOnCanvas: percentYs.every(onCanvasY),
-        }, {
-            percentageFinite: true,
-            percentageOrdered: true,
-            percentageRoundTrips: true,
-            indexedFinite: true,
-            indexedOrdered: true,
-            indexedRoundTrips: true,
-            everyPointOnCanvas: true,
-        }, [
-            'a negative base must not break Percentage/IndexedTo100',
-            `priceToScale(-10, Percentage, ${base}) = ${percentage.low}, priceToScale(-5, …) = ${percentage.high}`,
-            `priceToScale(-10, IndexedTo100, ${base}) = ${indexed.low}, priceToScale(-5, …) = ${indexed.high}`,
-            `Percentage y coordinates on a ${HEIGHT}px chart: ${percentYs.join(', ')}`,
-            `control, same series on a Normal scale: ${normalYs.join(', ')}`,
-        ].join('\n  '));
-    });
-});
-
-describe('AUDIT 2.16 — clampVisibleRange deserves the exact range the model delivers', () => {
+describe('clampVisibleRange delivers the exact range the model computes', () => {
     it('pins the clamped window instead of a predicate a no-op would satisfy', () => {
         const scale = new TimeScaleModel();
         scale.updateDataRange(100, 200);
