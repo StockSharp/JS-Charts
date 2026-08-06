@@ -1,5 +1,5 @@
-// Browser-free draw-call snapshot for chart primitives (the non-series drawing
-// in chart.visual.spec.ts: price/order lines). A primitive is driven through
+// Browser-free draw-call snapshot for chart primitives -- the non-series drawing:
+// price and order lines. A primitive is driven through
 // its public pane-view renderer with a real CanvasRenderTarget2D wrapping the
 // recording context — no browser, no pixels.
 

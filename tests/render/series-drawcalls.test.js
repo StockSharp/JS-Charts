@@ -90,7 +90,7 @@ function drawOps(type, data) {
 }
 
 // Every built-in series type whose renderer draws from plain OHLC/value/band
-// data. This is the browser-free equivalent of series-gallery.visual.spec.ts.
+// data. This is the browser-free rendering gate for the series gallery.
 const CASES = [
     ['Candlestick', ohlc],
     ['Bar', ohlc],

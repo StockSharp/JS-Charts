@@ -92,10 +92,17 @@ runs on push/PR to `main`: `npm ci` -> `npm run build` -> `npm test` -> stage
   `tsconfig.api.json` and diffs them against `tests/api/sschart.d.ts`. Any public
   surface change fails `npm test` until you run `npm run api:update` and commit the
   updated snapshot.
-- **Visual snapshots are strict** (`maxDiffPixelRatio: 0.002`, two DPR projects).
-  Playwright pins `colorScheme: dark`, `locale: en-US`, `timezoneId: UTC` for
-  determinism — don't change those casually. Regenerate with
-  `npm run test:browser:update` only when a render change is intended.
+- **Rendering is gated by draw-call snapshots, not pixels.** The pixel specs were
+  removed; `tests/render/*.test.js` record the ordered canvas calls each series,
+  primitive and indicator painter makes and diff them against
+  `tests/render/__snapshots__`. A missing snapshot file is a loud failure — it is
+  never created for you. Regenerate deliberately with `UPDATE_SNAPSHOTS=1 npm test`
+  and read the diff before committing it.
+- **Playwright specs assert behaviour, not appearance.** They still pin
+  `colorScheme: dark`, `locale: en-US`, `timezoneId: UTC` and two DPR projects for
+  determinism — don't change those casually. `npm run test:browser:update` rewrites
+  nothing pixel-based any more; the `toHaveScreenshot` threshold in
+  `playwright.config.ts` is left in place for specs that may want it again.
 - **Parity test reads C# live, no fixture.** `tools/csharp-catalog` is a .NET
   (`net10.0`) dumper that references a sibling `..\..\..\StockSharp (GitHub)\Algo.Indicators`
   checkout and prints the authoritative StockSharp indicator catalog/values. Do not

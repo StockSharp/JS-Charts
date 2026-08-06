@@ -1,4 +1,4 @@
-// Browser-free equivalent of indicator-painters.visual.spec.ts.
+// Browser-free rendering gate for the indicator painters.
 //
 // Indicator painters do NOT draw to a canvas — they MAP indicator outputs to
 // chart series (addSeries) and pick palette colours. So the browser-free
