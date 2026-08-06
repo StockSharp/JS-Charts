@@ -171,22 +171,31 @@ export class ChartLegend {
                 const r = ctToggle.getBoundingClientRect();
                 menu.style.cssText = `position:fixed;top:${r.bottom + 4}px;left:${r.left}px;z-index:99999;display:block;min-width:140px;`;
                 ((document as any).fullscreenElement || (document as any).webkitFullscreenElement || document.body).appendChild(menu);
+                // One place that takes the menu down, so choosing an item releases the outside
+                // click listener too. Removing the menu alone left the listener registered, and
+                // contains() on the detached subtree still answered true for clicks inside it, so
+                // a stale listener and the whole detached menu were held until some later click
+                // happened to land elsewhere.
+                let closeOutside: ((ev: MouseEvent) => void) | null = null;
+                const dismiss = () => {
+                    menu.remove();
+                    if (closeOutside) document.removeEventListener('click', closeOutside);
+                    closeOutside = null;
+                };
                 menu.addEventListener('click', (ev) => {
                     const item = (ev.target as HTMLElement).closest('.legend-ct-item') as HTMLElement | null;
                     if (!item) return;
                     const newType = item.dataset.type!;
                     this.setChartType(newType);
                     if (this.onChartTypeChange) this.onChartTypeChange(newType);
-                    menu.remove();
+                    dismiss();
                 });
                 // Close on outside click (delay so this very click doesn't trigger).
                 setTimeout(() => {
-                    document.addEventListener('click', function close(ev) {
-                        if (!menu.contains(ev.target as Node)) {
-                            menu.remove();
-                            document.removeEventListener('click', close);
-                        }
-                    });
+                    closeOutside = (ev: MouseEvent) => {
+                        if (!menu.isConnected || !menu.contains(ev.target as Node)) dismiss();
+                    };
+                    document.addEventListener('click', closeOutside);
                 }, 0);
             }
         };

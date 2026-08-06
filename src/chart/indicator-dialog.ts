@@ -4,7 +4,7 @@ import { IndicatorSettings } from './indicators/indicator-settings.js';
 import { humanize } from './indicators/calc/index.js';
 import {
     IndicatorCandleField,
-    IndicatorSourceKind,
+    IndicatorSourceKind, IndicatorSourceStatusReason,
     type IndicatorParameterValue,
     type IndicatorOutputStylePatch,
     type IndicatorSource,
@@ -46,6 +46,29 @@ const LINE_STYLES = [
 ] as const;
 
 /** Trading-workspace indicator picker and complete editor over IndicatorController. */
+/**
+ * Wording for an unavailable source.
+ *
+ * The key used to be built by interpolation, so nothing in a dictionary could ever match it: the
+ * warning stayed untranslated and even English readers saw the raw enum slug ('missing-indicator').
+ * One fixed key per reason, with the slug only as a last-resort argument to a positional key --
+ * the form this file already uses elsewhere ('Add {0}').
+ */
+function sourceUnavailableText(reason: IndicatorSourceStatusReason): string {
+    switch (reason) {
+        case IndicatorSourceStatusReason.MissingIndicator:
+            return T.t('Source unavailable: the indicator it reads no longer exists');
+        case IndicatorSourceStatusReason.MissingOutput:
+            return T.t('Source unavailable: the output it reads no longer exists');
+        case IndicatorSourceStatusReason.UpstreamUnavailable:
+            return T.t('Source unavailable: an indicator it depends on is unavailable');
+        case IndicatorSourceStatusReason.Error:
+            return T.t('Source unavailable: it could not be evaluated');
+        default:
+            return T.t('Source unavailable: {0}', reason);
+    }
+}
+
 export class IndicatorDialog {
     private modalEl: HTMLElement | null = null;
     private indicatorEngine: any = null;
@@ -319,7 +342,7 @@ export class IndicatorDialog {
             ))}</div>` : '';
         const sourceWarning = snapshot.sourceStatus.available ? '' : `
             <div class="indicator-source-warning">
-                ${html(T.t(`Source unavailable: ${snapshot.sourceStatus.reason}`))}
+                ${html(sourceUnavailableText(snapshot.sourceStatus.reason))}
             </div>`;
 
         this.settingsEl.innerHTML = `
