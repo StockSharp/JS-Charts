@@ -1,14 +1,14 @@
 import { T } from './i18n.js';
 import { TerminalUtils } from './utils.js';
 import { IndicatorSettings } from './indicators/indicator-settings.js';
-import { humanize } from './indicators/calc/index.js';
+import { humanize } from '@stocksharp/indicators';
 import {
     IndicatorCandleField,
     IndicatorSourceKind, IndicatorSourceStatusReason,
     type IndicatorParameterValue,
     type IndicatorOutputStylePatch,
     type IndicatorSource,
-} from '../indicators/index.js';
+} from '@stocksharp/indicators';
 import type {
     IndicatorController,
     IndicatorControllerSnapshot,

@@ -14,7 +14,7 @@ import {
     indicatorSourcesEqual,
     normalizeIndicatorSource,
     type IndicatorSource,
-} from '../indicators/indicator-source.js';
+} from '@stocksharp/indicators';
 
 export interface PersistableIndicatorStyleSeries {
     options?(): object;

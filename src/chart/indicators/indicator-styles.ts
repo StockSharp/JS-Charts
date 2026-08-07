@@ -1,8 +1,8 @@
 import type {
     IndicatorOutputAppearance,
     IndicatorOutputStylePatch,
-} from '../../indicators/indicator-output-style.js';
-import { normalizeIndicatorOutputStylePatch } from '../../indicators/indicator-output-style.js';
+} from '@stocksharp/indicators';
+import { normalizeIndicatorOutputStylePatch } from '@stocksharp/indicators';
 
 export interface IndicatorStyleSeries {
     readonly options?: (() => object) | object;

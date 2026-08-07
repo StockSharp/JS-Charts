@@ -9,7 +9,7 @@ import {
 import {
     normalizeIndicatorSource,
     type IndicatorSource,
-} from '../indicators/indicator-source.js';
+} from '@stocksharp/indicators';
 
 export const CHART_STATE_SCHEMA_VERSION = 1 as const;
 

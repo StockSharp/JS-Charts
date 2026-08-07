@@ -4,11 +4,16 @@
 [![npm version](https://img.shields.io/npm/v/%40stocksharp%2Fchart.svg)](https://www.npmjs.com/package/@stocksharp/chart)
 [![License](https://img.shields.io/badge/license-StockSharp%20EULA-c8202f.svg)](LICENSE)
 
-**StockSharp JS Trading Charts** is a dependency-free, canvas trading-chart
-engine: one chart owns native panes and a single time axis, with custom series,
-primitives, incremental indicators (live StockSharp parity), exact order flow
-(footprint / volume profile / TPO) and a broker-agnostic trading layer —
-published as a typed ESM package and the `SSChart` global.
+**StockSharp JS Trading Charts** is a canvas trading-chart engine: one chart owns
+native panes and a single time axis, with custom series, primitives, indicators,
+exact order flow (footprint / volume profile / TPO) and a broker-agnostic trading
+layer — published as a typed ESM package and the `SSChart` global.
+
+The indicators it draws come from
+[`@stocksharp/indicators`](https://github.com/StockSharp/JS-Indicators) — ~165 of
+them, checked against the C# StockSharp platform. That package is this engine's only
+runtime dependency, and it can be used on its own by anything that wants the numbers
+without a chart.
 
 ![StockSharp JS Trading Charts terminal — candlesticks with Bollinger Bands, an Ichimoku cloud, Fractals, a moving average and an RSI sub-pane](sample.png)
 
@@ -55,7 +60,7 @@ src/index.ts          public ESM entry (createChart, addSeries, timeScale, …)
 src/core/             the chart engine (canvas render, panes, scales, hit-test)
 src/chart/            the terminal chart stack, ported verbatim from Broker.Web.Trader:
   indicators/         IndicatorEngine + IndicatorRenderer + IndicatorSettings +
-                      calc/ (≈160 indicator implementations)
+                      painters/ (the drawing half; the maths is @stocksharp/indicators)
   chart-legend.ts     OHLCV + indicator-value legend (crosshair-driven)
   chart-context-menu.ts   right-click menu
   chart-pane-manager.ts   oscillator sub-panes (spine-synced time axes)
@@ -245,18 +250,23 @@ session calculations.
 ## Build & view
 
 ```
-npm install        # once, to fetch esbuild
+npm install        # once, to fetch esbuild and link ../JS-Indicators
 npm run build      # bundles src -> dist/
 npm run serve      # http://localhost:8791/demo/index.html
-npm test           # the ported indicator suite (163 files) against src/chart/indicators/calc
+npm test           # typecheck + public-API snapshot + the node:test suite
 ```
 
 ## Tests
 
-The indicator unit tests (`tests/indicators/*.test.js`, ported from the web
-terminal) run every `calc/` implementation and are the single source of truth for
-indicator correctness. `build-tests.mjs` esbuild-bundles them into `tests/_dist`,
-then `node --test` runs them.
+`build-tests.mjs` esbuild-bundles `tests/**/*.test.js` into `tests/_dist`, then
+`node --test` runs them. What is covered here is the chart: series, panes, drawings,
+order flow, persistence, and the indicator *engine* — how a computed series reaches a
+pane, a painter and the legend.
+
+Whether an indicator's value is right is settled in
+[JS-Indicators](https://github.com/StockSharp/JS-Indicators), against a live C# build
+rather than against a fixture. A number that looks wrong on screen is a bug to open
+there, not here.
 
 ## Notes
 

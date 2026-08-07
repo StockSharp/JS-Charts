@@ -1,5 +1,5 @@
-import { IndicatorPatchOperation } from '../../../indicators/indicator-runtime.js';
-import type { IndicatorRuntimePoint } from '../../../indicators/indicator-runtime.js';
+import { IndicatorPatchOperation } from '@stocksharp/indicators';
+import type { IndicatorRuntimePoint } from '@stocksharp/indicators';
 import type { IndicatorPainterPatchContext } from './indicator-painter.js';
 
 export interface RuntimePatchSeriesMapping {

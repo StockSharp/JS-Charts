@@ -46,10 +46,10 @@ import {
     type IndicatorRuntimePoint,
     type IndicatorSource,
     type IndicatorSourceStatus,
-} from '../../indicators/index.js';
+} from '@stocksharp/indicators';
 import type { IChartApi } from '../../core/chart-api.js';
 import type { ChartPaneManager } from '../chart-pane-manager.js';
-import type { CandlePoint, IndicatorLines, IndicatorParams, IndicatorPoint } from './calc/types.js';
+import type { CandlePoint, IndicatorLines, IndicatorParams, IndicatorPoint } from '@stocksharp/indicators';
 import type { IndicatorStyleSeries } from './indicator-styles.js';
 
 /**

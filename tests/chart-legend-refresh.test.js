@@ -31,7 +31,7 @@ const { IndicatorDialog } = require('../src/chart/indicator-dialog.js');
 const {
     IndicatorSourceKind,
     IndicatorSourceStatusReason,
-} = require('../src/indicators/index.js');
+} = require('@stocksharp/indicators');
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures

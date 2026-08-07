@@ -1,7 +1,7 @@
 import type {
     IndicatorRuntimePatch,
     IndicatorRuntimePoint,
-} from '../../../indicators/indicator-runtime.js';
+} from '@stocksharp/indicators';
 
 /**
  * Public contract used by built-in and application supplied indicator painters.

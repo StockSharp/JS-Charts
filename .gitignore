@@ -4,5 +4,9 @@ tests/_dist/
 test-results/
 playwright-report/
 tests/browser/fixtures/_dist/
-.parity-cache/
 *.log
+
+# .NET build output. This is a JS repo, but the parity dumper lived here and left its bin/obj
+# behind when it moved out -- and it took its own .gitignore with it, so nothing covered them.
+bin/
+obj/

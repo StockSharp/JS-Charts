@@ -1,6 +1,6 @@
 // Indicator Settings — config for each indicator (params, pane type, colors, group)
-import { getClientCatalog } from './calc/index.js';
-import { IndicatorTaxonomy } from '../../indicators/index.js';
+import { getClientCatalog } from '@stocksharp/indicators';
+import { IndicatorTaxonomy } from '@stocksharp/indicators';
 
 /** One declared parameter of a server catalog entry. */
 interface CatalogParameter {

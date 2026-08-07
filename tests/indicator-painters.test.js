@@ -10,11 +10,11 @@ global.SSChart = {
 
 const { IndicatorRenderer } = require('../src/chart/indicators/indicator-renderer.js');
 const { IndicatorEngine } = require('../src/chart/indicators/indicator-engine.js');
-const { getClientCatalog } = require('../src/chart/indicators/calc/index.js');
+const { getClientCatalog } = require('@stocksharp/indicators');
 const {
     IndicatorTaxonomy,
     getIndicatorDefinitions,
-} = require('../src/indicators/index.js');
+} = require('@stocksharp/indicators');
 const {
     hasIndicatorPainter,
     registerIndicatorPainter,

@@ -15,7 +15,7 @@ import {
     type IndicatorParameterValue,
     type IndicatorSource,
     type IndicatorSourceStatus,
-} from '../indicators/index.js';
+} from '@stocksharp/indicators';
 
 export interface IndicatorControllerEngineEntry {
     readonly id: string | number;

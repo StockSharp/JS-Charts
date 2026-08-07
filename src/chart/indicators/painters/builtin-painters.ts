@@ -1,4 +1,4 @@
-import { IndicatorPatchOperation } from '../../../indicators/indicator-runtime.js';
+import { IndicatorPatchOperation } from '@stocksharp/indicators';
 import type {
     IndicatorPainter,
     IndicatorPainterContext,

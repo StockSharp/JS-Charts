@@ -13,7 +13,7 @@ const {
     IndicatorSourceKind,
     IndicatorSourceStatusReason,
     normalizeIndicatorSource,
-} = require('../src/indicators/index.js');
+} = require('@stocksharp/indicators');
 const { IndicatorEngineStateAdapter } = require('../src/persistence/index.js');
 const { IndicatorEngine } = require('../src/chart/indicators/indicator-engine.js');
 const { IndicatorRenderer } = require('../src/chart/indicators/indicator-renderer.js');

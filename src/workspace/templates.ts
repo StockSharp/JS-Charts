@@ -7,7 +7,7 @@ import {
     type IndicatorCandlesSource,
     type IndicatorOutputStylePatch,
     type IndicatorParameterValue,
-} from '../indicators/index.js';
+} from '@stocksharp/indicators';
 import type {
     IndicatorControllerSnapshot,
     IndicatorUpdatePatch,

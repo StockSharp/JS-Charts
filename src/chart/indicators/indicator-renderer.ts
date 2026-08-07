@@ -13,8 +13,8 @@ import type {
     IndicatorRuntime,
     IndicatorRuntimePatch,
     IndicatorRuntimePoint,
-} from '../../indicators/indicator-runtime.js';
-import type { IndicatorParameters } from '../../indicators/indicator-definition.js';
+} from '@stocksharp/indicators';
+import type { IndicatorParameters } from '@stocksharp/indicators';
 
 declare const SSChart: any;
 

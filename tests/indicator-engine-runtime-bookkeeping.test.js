@@ -19,7 +19,7 @@ global.SSChart = {
 };
 
 const { IndicatorEngine } = require('../src/chart/indicators/indicator-engine.js');
-const { IndicatorSourceKind } = require('../src/indicators/index.js');
+const { IndicatorSourceKind } = require('@stocksharp/indicators');
 
 // The bookkeeping under test is independent of drawing, so the renderer is a no-op double: it
 // only has to exist, because add() renders as part of its reset cascade.
