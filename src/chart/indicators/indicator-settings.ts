@@ -97,16 +97,12 @@ export const IndicatorSettings = (function () {
             const entries = await resp.json();
             if (!Array.isArray(entries)) return;
 
-            // Client id (for back-compat with existing INDICATORS keys and
-            // indicator-renderer switches): prefer short alias when the server
-            // hands us one (sma/ema/bb/...), otherwise use the StockSharp type
-            // name as-is.
+            // Key by the StockSharp kind, which is exactly what getClientCatalog() keys by. Anything
+            // else -- a short alias, or an uppercased form of one -- lands beside the package's
+            // entry instead of merging into it, and the picker then lists the indicator twice.
             for (const entry of entries) {
-                const id = (entry.alias && entry.alias !== entry.kind) ? aliasToClientId(entry.alias) : entry.kind;
-                // Alias-based ids (for example MACD) may differ from the
-                // canonical local catalog key. Reuse that entry as well so
-                // client-only metadata such as `painter` survives a merge.
-                const existing = INDICATORS[id] || INDICATORS[entry.kind] || {};
+                const id = entry.kind;
+                const existing = INDICATORS[id] || {};
                 // Server-authoritative measure maps straight to
                 // IIndicator.Measure on the StockSharp side — this is how the
                 // engine decides where to draw: Price → overlay on candles,
@@ -148,20 +144,6 @@ export const IndicatorSettings = (function () {
         } catch (err) {
             console.warn('[Indicators] failed to load catalog:', err);
         }
-    }
-
-    function aliasToClientId(alias: string) {
-        // Legacy aliases were uppercase ("SMA"); the catalog returns them as
-        // lowercase short codes ("sma"). Map to the existing uppercase keys
-        // that indicator-renderer.js still switches on.
-        const map: Record<string, string> = {
-            sma: 'SMA', ema: 'EMA', rsi: 'RSI', atr: 'ATR', adx: 'ADX',
-            macd: 'MACD', bb: 'BollingerBands', stochastic: 'Stochastic',
-            envelope: 'Envelope', alligator: 'Alligator', ichimoku: 'Ichimoku',
-            psar: 'ParabolicSAR', rvi: 'RVI', ppo: 'PPO', gator: 'GatorOscillator',
-            volume: 'Volume', zigzag: 'ZigZag', fractals: 'Fractals',
-        };
-        return map[alias.toLowerCase()] || alias;
     }
 
     function inferGroup(pane: string) {
