@@ -69,7 +69,8 @@ src/chart/            the terminal chart stack, ported verbatim from Broker.Web.
   i18n.ts, utils.ts   minimal shims (English fallback, formatPrice + showToast)
   app.ts              demo wiring — drives the modules exactly as terminal-app.ts does
 demo/                 the showcase (index.html + terminal CSS + seeded market data)
-build.mjs             esbuild -> dist/sschart.js (SSChart global) + dist/chart-app.js
+build.mjs             esbuild -> dist/sschart.js (SSChart global) + dist/chart-app.js;
+                      also copies the indicator package's dist/ssindicators.js beside them
 ```
 
 The chart modules are the **same code the web terminal runs** — they were lifted
@@ -94,11 +95,13 @@ loads it as the `SSChart` global, then the chart-stack bundle on top.
 
 ## Usage
 
-Load the engine bundle (it publishes `window.SSChart`) and drive it with a small
-declarative API — `time` is UNIX **seconds**:
+Load the indicator package and the engine bundle — in that order, the engine reads the
+`SSIndicators` global the package publishes — then drive it with a small declarative
+API. `time` is UNIX **seconds**:
 
 ```html
 <div id="chart" style="width:800px;height:400px"></div>
+<script src="dist/ssindicators.js"></script>
 <script src="dist/sschart.js"></script>
 <script>
   const chart = SSChart.createChart(document.getElementById('chart'), {

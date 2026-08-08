@@ -110,6 +110,15 @@ in `tests/render/**`, and the interaction / hit-test / lifecycle specs are a loc
   determinism — don't change those casually. `npm run test:browser:update` rewrites
   nothing pixel-based any more; the `toHaveScreenshot` threshold in
   `playwright.config.ts` is left in place for specs that may want it again.
+- **The indicators are loaded at runtime, not bundled in.** `build.mjs` resolves
+  `@stocksharp/indicators` to a stub that reads the `SSIndicators` global, and copies the
+  package's own `dist/ssindicators.js` beside our bundles. That is what lets the indicators be
+  updated by replacing one file — no chart rebuild, no redeploy of the embedding page. A page
+  must load `ssindicators.js` **before** `sschart.js` / `chart-app.js`; forget it and the stub
+  throws a message naming the missing script. Two build guards hold the arrangement up: the
+  chart bundles must contain zero `registerIndicator(` calls, and `ssindicators.js` must contain
+  many. Only the IIFE bundles are external — `build-tests.mjs` and the browser fixtures still
+  inline the package, because a test wants the real code, not a global.
 - **The indicators are a dependency, not a folder.** Nothing under `src/` computes an
   indicator value any more; `@stocksharp/indicators` does. Fixing arithmetic, adding a
   catalogue entry or chasing a C# divergence means working in that repo and then
