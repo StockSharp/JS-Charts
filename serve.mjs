@@ -10,7 +10,12 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 // Default HOST 0.0.0.0 binds every interface (localhost + LAN IP).
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 8791;
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.map': 'application/json', '.css': 'text/css' };
+const MIME = {
+    '.html': 'text/html', '.js': 'text/javascript', '.map': 'application/json', '.css': 'text/css',
+    // Without these two the icons go out as application/octet-stream and the browser
+    // declines them -- an svg favicon in particular is refused on the wrong type.
+    '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.jpg': 'image/jpeg', '.png': 'image/png',
+};
 
 createServer(async (req, res) => {
     try {
