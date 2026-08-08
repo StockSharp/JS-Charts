@@ -180,3 +180,32 @@ body.hub { overflow: auto; }
     font-size: 11px; color: var(--t-text-dim); border: 1px solid var(--t-border);
     border-radius: 999px; padding: 4px 11px;
 }
+
+/* ---------------------------------------------------------------------------
+   Narrow screens. The showcase is a chart beside a 320px explainer, which on a
+   phone leaves the chart a sliver — a chart that cannot be read is not a demo of
+   a chart. Below this width the two become one column, chart first.
+   --------------------------------------------------------------------------- */
+@media (max-width: 820px) {
+  .showcase-body {
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - 52px);
+  }
+
+  /* A canvas has no content to size it, so it needs a height of its own here —
+     in a row it inherited the viewport's. */
+  .chart-wrap { flex: none; height: 58vh; min-height: 320px; }
+
+  .side {
+    width: auto;
+    flex: none;
+    border-left: none;
+    border-top: 1px solid var(--t-border);
+    overflow: visible;
+  }
+
+  .side-block.grow { flex: none; min-height: 0; }
+
+  .demo-header { height: auto; flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+}
