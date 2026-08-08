@@ -111,7 +111,7 @@
     "release:major": "npm version major -m \"chore: release v%s\""
   },
   "dependencies": {
-    "@stocksharp/indicators": "file:../JS-Indicators"
+    "@stocksharp/indicators": "^0.1.1"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",

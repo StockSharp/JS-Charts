@@ -44,10 +44,8 @@ and load automatically; this file is repo-specific only.
 indicators and now runs in the JS-Indicators repo. Browser tests need
 `npx playwright install --with-deps chromium` first.
 
-The indicator package is consumed from a **sibling checkout**
-(`"@stocksharp/indicators": "file:../JS-Indicators"`), so `npm install` here needs
-`D:\stocksharp\JS-Indicators` to exist and to have been built. Once the package is on
-npm this becomes an ordinary version range.
+The indicator package is an ordinary npm dependency (`@stocksharp/indicators`), so a fresh
+clone installs it from the registry -- no sibling checkout required.
 
 ## Layout
 
