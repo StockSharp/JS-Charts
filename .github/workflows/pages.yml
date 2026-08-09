@@ -1,7 +1,7 @@
 name: Deploy demo to GitHub Pages
 
 # Builds the sschart engine + chart-stack bundles and publishes the demo so the
-# live HTML can be viewed at https://stocksharp.github.io/Charts/demo/ .
+# live HTML can be viewed at https://stocksharp.github.io/JS-Charts/demo/ .
 # Requires Pages to be enabled for the repo with "Source: GitHub Actions".
 
 on:

@@ -84,7 +84,7 @@ Build outputs are git-ignored: `dist/`, `tests/_dist/`, `test-results/`,
 No npm/nuget artifact — the deliverable is the **demo site**. `.github/workflows/pages.yml`
 runs on push/PR to `main`: `npm ci` -> `npm run build` -> `npm test` -> stage
 `demo/` + `dist/` -> deploy to GitHub Pages
-(`https://stocksharp.github.io/Charts/demo/`). Node 22 in CI.
+(`https://stocksharp.github.io/JS-Charts/demo/`). Node 22 in CI.
 
 **Playwright does NOT run in CI, by design — know what that costs you.** GitHub never
 launches a browser here; rendering is covered browser-free by the draw-call snapshots

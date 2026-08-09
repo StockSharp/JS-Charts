@@ -1,6 +1,6 @@
 # StockSharp JS Trading Charts
 
-[![Build and test](https://github.com/StockSharp/Charts/actions/workflows/ci.yml/badge.svg)](https://github.com/StockSharp/Charts/actions/workflows/ci.yml)
+[![Build and test](https://github.com/StockSharp/JS-Charts/actions/workflows/ci.yml/badge.svg)](https://github.com/StockSharp/JS-Charts/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/%40stocksharp%2Fchart.svg)](https://www.npmjs.com/package/@stocksharp/chart)
 [![License](https://img.shields.io/badge/license-StockSharp%20EULA-c8202f.svg)](LICENSE)
 
@@ -17,10 +17,10 @@ without a chart.
 
 ![StockSharp JS Trading Charts terminal — candlesticks with Bollinger Bands, an Ichimoku cloud, Fractals, a moving average and an RSI sub-pane](sample.png)
 
-[Live demo](https://stocksharp.github.io/Charts/demo/) ·
+[Live demo](https://stocksharp.github.io/JS-Charts/demo/) ·
 [StockSharp website](https://stocksharp.com/) ·
-[GitHub repository](https://github.com/StockSharp/Charts) ·
-[Issue tracker](https://github.com/StockSharp/Charts/issues)
+[GitHub repository](https://github.com/StockSharp/JS-Charts) ·
+[Issue tracker](https://github.com/StockSharp/JS-Charts/issues)
 
 ## Screenshots
 

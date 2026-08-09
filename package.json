@@ -9,11 +9,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/StockSharp/Charts.git"
+    "url": "git+https://github.com/StockSharp/JS-Charts.git"
   },
-  "homepage": "https://stocksharp.github.io/Charts/",
+  "homepage": "https://stocksharp.github.io/JS-Charts/",
   "bugs": {
-    "url": "https://github.com/StockSharp/Charts/issues"
+    "url": "https://github.com/StockSharp/JS-Charts/issues"
   },
   "keywords": [
     "stocksharp",
