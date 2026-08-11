@@ -21,7 +21,7 @@ const UPDATE = process.env.UPDATE_SNAPSHOTS === '1';
 
 // Catalog painter names registered by builtin-painters.ts.
 const PAINTERS = [
-    'band', 'macd-histogram', 'ppo-histogram', 'stochastic', 'adx', 'alligator',
+    'line', 'band', 'macd-histogram', 'ppo-histogram', 'stochastic', 'adx', 'alligator',
     'ichimoku', 'dots', 'fractals', 'gator', 'volume', 'directional-histogram', 'dual-line',
 ];
 

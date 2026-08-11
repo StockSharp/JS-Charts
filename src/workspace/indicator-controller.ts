@@ -16,6 +16,7 @@ import {
     type IndicatorSource,
     type IndicatorSourceStatus,
 } from '@stocksharp/indicators';
+import { resolveIndicatorParameter } from '../indicator-parameter-migration.js';
 
 export interface IndicatorControllerEngineEntry {
     readonly id: string | number;
@@ -463,9 +464,16 @@ function normalizeParameterPatch(
     const allowed = new Set([...Object.keys(current), ...definitions.keys()]);
     const result: Record<string, IndicatorParameterValue> = { ...current };
     for (const [key, raw] of Object.entries(value)) {
-        if (!allowed.has(key))
+        const resolved = resolveIndicatorParameter(definition, key, raw);
+        const canonical = resolved?.id ?? key;
+        if (resolved === null && !allowed.has(key))
             throw new TypeError(`sschart: indicator parameter '${key}' is unsupported`);
-        result[key] = normalizeParameterValue(raw, definitions.get(key), key);
+        if (canonical !== key && Object.prototype.hasOwnProperty.call(value, canonical)) continue;
+        result[canonical] = normalizeParameterValue(
+            resolved?.value ?? raw,
+            resolved?.definition ?? definitions.get(canonical),
+            canonical,
+        );
     }
     return Object.freeze(result);
 }
@@ -478,8 +486,16 @@ function normalizeCurrentParameters(
         throw new TypeError('sschart: indicator parameters must be an object');
     const definitions = new Map((definition?.parameters ?? []).map(item => [item.id, item]));
     const result: Record<string, IndicatorParameterValue> = {};
-    for (const [key, raw] of Object.entries(value))
-        result[key] = normalizeParameterValue(raw, definitions.get(key), key);
+    for (const [key, raw] of Object.entries(value)) {
+        const resolved = resolveIndicatorParameter(definition, key, raw);
+        const canonical = resolved?.id ?? key;
+        if (canonical !== key && Object.prototype.hasOwnProperty.call(value, canonical)) continue;
+        result[canonical] = normalizeParameterValue(
+            resolved?.value ?? raw,
+            resolved?.definition ?? definitions.get(canonical),
+            canonical,
+        );
+    }
     return Object.freeze(result);
 }
 

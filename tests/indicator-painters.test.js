@@ -14,6 +14,7 @@ const { getClientCatalog } = require('@stocksharp/indicators');
 const {
     IndicatorTaxonomy,
     getIndicatorDefinitions,
+    resolveIndicatorOutputs,
 } = require('@stocksharp/indicators');
 const {
     hasIndicatorPainter,
@@ -110,23 +111,27 @@ describe('indicator painters', () => {
             engine.add('Momentum', { length: 5 }, '__main__'),
             engine.add('MoneyFlowIndex', { length: 7 }, '__main__'),
             engine.add('OnBalanceVolume', {}, '__main__'),
-            engine.add('BollingerBands', { length: 7, stdDev: 2 }, '__main__'),
+            engine.add('BollingerBands', {
+                length: 7, width: 2, upBandWidth: 2, lowBandWidth: -2,
+            }, '__main__'),
             engine.add('MovingAverageConvergenceDivergence', {
-                fastLength: 4, slowLength: 8, signalLength: 3,
+                shortMaLength: 4, longMaLength: 8,
             }, '__main__'),
             engine.add('StochasticOscillator', {
-                kPeriod: 7, dPeriod: 3, smooth: 2,
+                kLength: 7, dLength: 3,
             }, '__main__'),
             engine.add('AverageDirectionalIndex', { length: 7 }, '__main__'),
             engine.add('CommodityChannelIndex', { length: 7 }, '__main__'),
-            engine.add('Ichimoku', { tenkan: 4, kijun: 7, senkouB: 12 }, '__main__'),
+            engine.add('Ichimoku', {
+                tenkanLength: 4, kijunLength: 7, senkouBLength: 12, chinkouLength: 7,
+            }, '__main__'),
             engine.add('TimeWeightedAveragePrice', {}, '__main__'),
             engine.add('VolumeWeightedAveragePrice', {}, '__main__'),
             engine.add('ParabolicSar', {
                 acceleration: 0.02, accelerationStep: 0.02, accelerationMax: 0.2,
             }, '__main__'),
             engine.add('KaufmanAdaptiveMovingAverage', {
-                length: 7, fastSc: 2, slowSc: 20,
+                length: 7, fastSCPeriod: 2, slowSCPeriod: 20,
             }, '__main__'),
             engine.add('KaufmanEfficiencyRatio', { length: 7 }, '__main__'),
             engine.add('FractalAdaptiveMovingAverage', { length: 9 }, '__main__'),
@@ -154,28 +159,32 @@ describe('indicator painters', () => {
             engine.add('Lowest', { length: 7 }, '__main__'),
             engine.add('VolumeIndicator', {}, '__main__'),
             engine.add('WilliamsR', { length: 7 }, '__main__'),
-            engine.add('Envelope', { length: 7, percent: 2.5 }, '__main__'),
-            engine.add('AwesomeOscillator', { shortLength: 3, longLength: 9 }, '__main__'),
+            engine.add('Envelope', { length: 7, shift: 0.025 }, '__main__'),
+            engine.add('AwesomeOscillator', {
+                shortMaLength: 3, longMaLength: 9,
+            }, '__main__'),
             engine.add('Aroon', { length: 7 }, '__main__'),
             engine.add('AroonOscillator', { length: 7 }, '__main__'),
             engine.add('AccumulationDistributionLine', {}, '__main__'),
             engine.add('BalanceOfPower', {}, '__main__'),
             engine.add('Trix', { length: 4 }, '__main__'),
-            engine.add('Acceleration', { shortLength: 3, longLength: 9, smaLength: 3 }, '__main__'),
+            engine.add('Acceleration', {
+                shortMaLength: 3, longMaLength: 9, smaLength: 3,
+            }, '__main__'),
             engine.add('ArnaudLegouxMovingAverage', { length: 9, offset: 0.85, sigma: 6 }, '__main__'),
             engine.add('BearPower', { length: 7 }, '__main__'),
             engine.add('BullPower', { length: 7 }, '__main__'),
             engine.add('ChaikinMoneyFlow', { length: 7 }, '__main__'),
             engine.add('ChaikinVolatility', { emaLength: 5, rocLength: 3 }, '__main__'),
             engine.add('CenterOfGravityOscillator', { length: 7 }, '__main__'),
-            engine.add('ChaikinOscillator', { fast: 3, slow: 7 }, '__main__'),
             engine.add('ChandeMomentumOscillator', { length: 7 }, '__main__'),
-            engine.add('ConnorsRSI', { rsiLength: 3, streakLength: 2, rocLength: 5 }, '__main__'),
+            engine.add('ConnorsRSI', {
+                rsiPeriod: 3, streakRSIPeriod: 2, rocRSIPeriod: 5,
+            }, '__main__'),
             engine.add('DetrendedPriceOscillator', { length: 7 }, '__main__'),
             engine.add('DirectionalIndex', { length: 7 }, '__main__'),
             engine.add('EaseOfMovement', { length: 7 }, '__main__'),
             engine.add('EhlersFisherTransform', { length: 7 }, '__main__'),
-            engine.add('FastStochastic', { kPeriod: 7, dPeriod: 3 }, '__main__'),
             engine.add('ApprovalFlowIndex', { length: 7 }, '__main__'),
             engine.add('AdaptiveLaguerreFilter', { gamma: 0.55 }, '__main__'),
             engine.add('AdaptivePriceZone', { period: 7, bandPercentage: 2 }, '__main__'),
@@ -191,12 +200,13 @@ describe('indicator painters', () => {
             }, '__main__'),
             engine.add('CompositeMomentum', {
                 shortRocLength: 3, longRocLength: 7, rsiLength: 5,
-                fastLength: 4, slowLength: 7, smaLength: 4,
+                emaFastLength: 4, emaSlowLength: 7, smaLength: 4,
             }, '__main__'),
             engine.add('ElderImpulseSystem', {
-                emaLength: 5, fastLength: 4, slowLength: 8,
+                emaLength: 5, shortMaLength: 4, longMaLength: 8,
             }, '__main__'),
             engine.add('ElderRay', { length: 7 }, '__main__'),
+            engine.add('ElderForceIndex', { length: 7 }, '__main__'),
             engine.add('ForceIndex', { length: 7 }, '__main__'),
             engine.add('EndpointMovingAverage', { length: 7 }, '__main__'),
             engine.add('ElliotWaveOscillator', {
@@ -222,7 +232,7 @@ describe('indicator painters', () => {
             }, '__main__'),
             engine.add('KeltnerChannels', { length: 7, multiplier: 2 }, '__main__'),
             engine.add('KasePeakOscillator', {
-                atrLength: 7, shortPeriod: 4, longPeriod: 8,
+                shortPeriod: 4, longPeriod: 8,
             }, '__main__'),
             engine.add('KnowSureThing', {
                 roc1Length: 3, roc2Length: 4, roc3Length: 5, roc4Length: 7,
@@ -241,13 +251,16 @@ describe('indicator painters', () => {
                 shortPeriod: 4, longPeriod: 9,
             }, '__main__'),
             engine.add('MovingAverageConvergenceDivergenceSignal', {
-                longLength: 9, shortLength: 4, signalLength: 3,
+                longMaLength: 9, shortMaLength: 4, signalMaLength: 3,
+            }, '__main__'),
+            engine.add('MovingAverageConvergenceDivergenceHistogram', {
+                shortMaLength: 4, longMaLength: 9, signalMaLength: 3,
             }, '__main__'),
             engine.add('MovingAverageRibbon', {
                 shortPeriod: 2, longPeriod: 4, ribbonCount: 3,
             }, '__main__'),
             engine.add('McClellanOscillator', {
-                shortLength: 4, longLength: 9,
+                ema19Length: 4, ema39Length: 9,
             }, '__main__'),
             engine.add('MeanDeviation', { length: 7 }, '__main__'),
             engine.add('Median', { length: 7 }, '__main__'),
@@ -276,10 +289,10 @@ describe('indicator painters', () => {
                 length: 7, momentumPeriod: 3,
             }, '__main__'),
             engine.add('RelativeVigorIndex', {
-                length: 4, signalLength: 4,
+                averageLength: 4, signalLength: 4,
             }, '__main__'),
             engine.add('RangeActionVerificationIndex', {
-                shortLength: 4, longLength: 9,
+                shortSmaLength: 4, longSmaLength: 9,
             }, '__main__'),
             engine.add('RankCorrelationIndex', { length: 7 }, '__main__'),
             engine.add('RainbowCharts', { lines: 4 }, '__main__'),
@@ -289,10 +302,10 @@ describe('indicator painters', () => {
             engine.add('SineWave', { length: 7 }, '__main__'),
             engine.add('SchaffTrendCycle', {
                 length: 3,
-                shortLength: 4,
-                longLength: 8,
-                cycleLength: 3,
-                signalLength: 2,
+                shortMaLength: 4,
+                longMaLength: 8,
+                stochasticKLength: 3,
+                signalMaLength: 2,
             }, '__main__'),
             engine.add('StochasticK', { length: 7 }, '__main__'),
             engine.add('T3MovingAverage', {
@@ -300,7 +313,13 @@ describe('indicator painters', () => {
             }, '__main__'),
             engine.add('LinearRegRSquared', { length: 7 }, '__main__'),
             engine.add('PercentagePriceOscillator', {
-                shortLength: 4, longLength: 9, signalLength: 3,
+                shortPeriod: 4, longPeriod: 9,
+            }, '__main__'),
+            engine.add('PercentagePriceOscillatorSignal', {
+                shortPeriod: 4, longPeriod: 9, signalMaLength: 3,
+            }, '__main__'),
+            engine.add('PercentagePriceOscillatorHistogram', {
+                shortPeriod: 4, longPeriod: 9, signalMaLength: 3,
             }, '__main__'),
             engine.add('PercentageVolumeOscillator', {
                 shortPeriod: 4, longPeriod: 9,
@@ -352,138 +371,17 @@ describe('indicator painters', () => {
                 .sort(),
         );
         assert.ok(entries.every((entry) => entry.runtime));
-        assert.deepEqual(entries.map((entry) => entry.outputNames[0]), [
-            'line', 'line', 'line', 'oscillator', 'line', 'line', 'line',
-            'upper', 'macd', 'k', 'plusDI', 'line', 'tenkan', 'line', 'line',
-            'value', 'line', 'line', 'line', 'line', 'line', 'line', 'line', 'line',
-            'line', 'line', 'jaw', 'upper', 'line', 'line', 'line', 'line', 'line',
-            'value',
-            'line',
-            'upper',
-            'value',
-            'up',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'rsi',
-            'line',
-            'plusDI',
-            'line',
-            'main',
-            'k',
-            'line',
-            'line',
-            'ma',
-            'line',
-            'line',
-            'line',
-            'longStop',
-            'composite',
-            'composite',
-            'impulse',
-            'bull',
-            'line',
-            'line',
-            'line',
-            'line',
-            'l236',
-            'line',
-            'line',
-            'line',
-            'short3',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'upper',
-            'shortTerm',
-            'kst',
-            'shortEma',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'signal',
-            'macd',
-            'ribbon0',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'pp',
-            'line',
-            'line',
-            'rvi',
-            'line',
-            'line',
-            'sma1',
-            'value',
-            'line',
-            'line',
-            'sine',
-            'line',
-            'line',
-            'line',
-            'line',
-            'ppo',
-            'shortEma',
-            'line',
-            'line',
-            'upper',
-            'line',
-            'line',
-            'value',
-            'line',
-            'tsi',
-            'line',
-            'line',
-            'line',
-            'viPlus',
-            'line',
-            'line',
-            'wt1',
-            'line',
-            'line',
-            'line',
-            'cci',
-            'line',
-            'upper',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'line',
-            'value',
-            'line',
-        ]);
+        const definitions = new Map(getIndicatorDefinitions().map(definition => [
+            definition.id,
+            definition,
+        ]));
+        assert.deepEqual(
+            entries.map(entry => entry.outputNames),
+            entries.map(entry => resolveIndicatorOutputs(
+                definitions.get(entry.type),
+                entry.params,
+            ).map(output => output.id)),
+        );
         assert.ok(entries.every((entry) => (
             entry.seriesRefs.every((series) => series.setDataCalls === 1)
         )));
@@ -545,9 +443,17 @@ describe('indicator painters', () => {
         const ppoEntry = entries.find(
             entry => entry.type === 'PercentagePriceOscillator',
         );
-        assert.deepEqual(ppoEntry.outputNames, ['ppo', 'signal', 'histogram']);
+        assert.deepEqual(ppoEntry.outputNames, ['ppo']);
         assert.deepEqual(
             ppoEntry.seriesRefs.map(series => series.definition.type),
+            ['Line'],
+        );
+        const ppoHistogramEntry = entries.find(
+            entry => entry.type === 'PercentagePriceOscillatorHistogram',
+        );
+        assert.deepEqual(ppoHistogramEntry.outputNames, ['ppo', 'signal', 'histogram']);
+        assert.deepEqual(
+            ppoHistogramEntry.seriesRefs.map(series => series.definition.type),
             ['Histogram', 'Line', 'Line'],
         );
         const pvoEntry = entries.find(
@@ -786,18 +692,24 @@ describe('indicator painters', () => {
         assert.ok(entries.every((entry) => (
             entry.seriesRefs.every((series) => series.setDataCalls === 1)
         )));
-        assert.ok(entries.every((entry) => (
-            entry.seriesRefs.every((series) => series.updateCalls <= 2)
-        )));
+        // A 2.x preview transition may remove, replace and append one tail value.
+        // It must remain a bounded patch and never fall back to another setData pass.
+        assert.deepEqual(entries.flatMap(entry => entry.seriesRefs
+            .filter(series => series.updateCalls > 3)
+            .map(series => ({ type: entry.type, updateCalls: series.updateCalls }))), []);
         assert.ok(entries.every((entry) => entry.runtime.committedCount === 40));
         assert.ok(entries.every((entry) => entry.runtime.retainedFrom === 40));
         assert.ok(entries.every((entry) => entry.runtime.inputs().length === 0));
         assert.equal(entries[12].seriesRefs[3].updateCalls, 1);
         const values = engine.getValuesAt(candles[candles.length - 1].time);
-        const sparseKinds = new Set(['Peak', 'Trough']);
-        assert.ok(values.filter((item) => !sparseKinds.has(item.type)).every((item) => (
-            typeof Object.values(item.values)[0] === 'number'
-        )));
+        const formingValueGaps = new Set(['BalanceOfPower', 'Peak', 'Trough']);
+        assert.deepEqual(values.filter(item => !formingValueGaps.has(item.type)
+            && typeof Object.values(item.values)[0] !== 'number')
+            .map(item => ({ type: item.type, values: item.values })), []);
+        assert.deepEqual(
+            values.find(item => item.type === 'BalanceOfPower').values,
+            { line: null },
+        );
         assert.deepEqual(
             values.find((item) => item.type === 'Peak').values,
             { value: null },
@@ -954,7 +866,7 @@ describe('indicator painters', () => {
         }
     });
 
-    it('catalog painter names all resolve and ordinary indicators remain unassigned', () => {
+    it('catalog painter names and current 2.x metadata all resolve', () => {
         const catalog = getClientCatalog();
         const configured = catalog.filter(entry => entry.painter);
         assert.ok(configured.length >= 10);
@@ -994,7 +906,7 @@ describe('indicator painters', () => {
         const kasePeak = catalog.find(entry => entry.id === 'KasePeakOscillator');
         assert.equal(kasePeak.painter, undefined);
         assert.deepEqual(kasePeak.params.map(parameter => parameter.key), [
-            'atrLength', 'shortPeriod', 'longPeriod',
+            'shortPeriod', 'longPeriod',
         ]);
         assert.equal(catalog.find(entry => entry.id === 'KnowSureThing').painter, undefined);
         assert.equal(
@@ -1142,7 +1054,7 @@ describe('indicator painters', () => {
         const standardError = catalog.find(entry => entry.id === 'StandardError');
         assert.equal(standardError.painter, undefined);
         assert.equal(standardError.group, 'Statistical');
-        assert.equal(standardError.params[0].min, 2);
+        assert.equal(standardError.params[0].min, 1);
         const shift = catalog.find(entry => entry.id === 'Shift');
         assert.equal(shift.painter, undefined);
         assert.equal(shift.group, 'Price');
@@ -1176,9 +1088,15 @@ describe('indicator painters', () => {
         assert.deepEqual(rSquared.outputs, ['line']);
         assert.deepEqual(rSquared.scaleRange, { min: 0, max: 1 });
         const ppo = catalog.find(entry => entry.id === 'PercentagePriceOscillator');
-        assert.equal(ppo.painter, 'ppo-histogram');
+        assert.equal(ppo.painter, 'line');
         assert.equal(ppo.group, 'Momentum');
+        assert.deepEqual(ppo.outputs, ['ppo']);
         assert.deepEqual(ppo.levels, [0]);
+        const ppoHistogram = catalog.find(
+            entry => entry.id === 'PercentagePriceOscillatorHistogram',
+        );
+        assert.equal(ppoHistogram.painter, 'ppo-histogram');
+        assert.deepEqual(ppoHistogram.outputs, ['ppo', 'signal', 'histogram']);
         const pvo = catalog.find(entry => entry.id === 'PercentageVolumeOscillator');
         assert.equal(pvo.painter, undefined);
         assert.equal(pvo.group, 'Volume');
@@ -1361,7 +1279,7 @@ describe('indicator painters', () => {
         const balanceVolume = catalog.find(entry => entry.id === 'BalanceVolume');
         assert.equal(balanceVolume.painter, undefined);
         assert.equal(balanceVolume.group, 'Volume');
-        assert.equal(balanceVolume.pane, 'overlay');
+        assert.equal(balanceVolume.pane, 'separate');
         assert.deepEqual(balanceVolume.outputs, ['line']);
         const peak = catalog.find(entry => entry.id === 'Peak');
         assert.equal(peak.painter, undefined);
@@ -1383,7 +1301,9 @@ describe('indicator painters', () => {
             'directional-histogram',
         );
         const fractals = catalog.find(entry => entry.id === 'Fractals');
-        assert.deepEqual(fractals.params[0], { key: 'length', default: 5, min: 3, max: 99, step: 2 });
+        assert.deepEqual(fractals.params[0], {
+            key: 'length', aliases: [], default: 5, min: 3, max: 99, step: 2,
+        });
     });
 
     it('keeps catalog categories, panes and output schemas aligned with runtime definitions', () => {
@@ -1684,8 +1604,8 @@ describe('indicator painters', () => {
         const series = entry.seriesRefs[0];
 
         assert.ok(entry.runtime);
-        assert.deepEqual(series.data, [{ time: candles[2].time, value: 13 }]);
-        assert.deepEqual(engine.getValuesAt(candles[2].time)[0].values, { value: 13 });
+        assert.deepEqual(series.data, [{ time: candles[1].time, value: 13 }]);
+        assert.deepEqual(engine.getValuesAt(candles[1].time)[0].values, { value: 13 });
         assert.deepEqual(engine.getValuesAt(candles[5].time)[0].values, { value: null });
 
         candles[5].close = 12.9;
@@ -1694,15 +1614,15 @@ describe('indicator painters', () => {
         assert.equal(series.setDataCalls, 1);
         assert.equal(series.popCalls, 1);
         assert.deepEqual(series.data, []);
-        assert.deepEqual(engine.getValuesAt(candles[2].time)[0].values, { value: null });
+        assert.deepEqual(engine.getValuesAt(candles[1].time)[0].values, { value: null });
 
         candles[5].close = 11;
         engine.onLiveUpdate();
         await new Promise((resolve) => setTimeout(resolve, 10));
         assert.equal(series.setDataCalls, 1);
         assert.equal(series.updateCalls, 1);
-        assert.deepEqual(series.data, [{ time: candles[2].time, value: 13 }]);
-        assert.deepEqual(engine.getValuesAt(candles[2].time)[0].values, { value: 13 });
+        assert.deepEqual(series.data, [{ time: candles[1].time, value: 13 }]);
+        assert.deepEqual(engine.getValuesAt(candles[1].time)[0].values, { value: 13 });
     });
 
     it('does not carry a shifted single-output value into adjacent candles', () => {

@@ -35,6 +35,7 @@ import {
     indicatorSourcesEqual,
     normalizeIndicatorSource,
     type IndicatorDefinition,
+    type CandlestickData as CandlePoint,
     type IndicatorOutputAppearance,
     type IndicatorOutputMetadataValue,
     type IndicatorOutputSource,
@@ -48,9 +49,21 @@ import {
     type IndicatorSourceStatus,
 } from '@stocksharp/indicators';
 import type { IChartApi } from '../../core/chart-api.js';
+import {
+    migrateIndicatorParameters,
+    migrateIndicatorType,
+} from '../../indicator-parameter-migration.js';
 import type { ChartPaneManager } from '../chart-pane-manager.js';
-import type { CandlePoint, IndicatorLines, IndicatorParams, IndicatorPoint } from '@stocksharp/indicators';
 import type { IndicatorStyleSeries } from './indicator-styles.js';
+
+/** Legacy server/calc payloads belong to the chart boundary, not the indicator package API. */
+interface IndicatorPoint {
+    time: string | number;
+    value: number | null;
+}
+
+type IndicatorLines = Record<string, IndicatorPoint[]>;
+type IndicatorParams = Record<string, any>;
 
 /**
  * The runtime as the engine holds it. One engine drives every registered definition, so the
@@ -387,6 +400,7 @@ export class IndicatorEngine {
             throw new TypeError('sschart: indicator price scale id must be a non-empty string');
         }
         const priceScaleId = persistence.priceScaleId?.trim();
+        type = migrateIndicatorType(type, params);
         const settings: IndicatorCatalogEntry | null = IndicatorSettings.getIndicator(type);
         if (!settings) return null;
 
@@ -404,7 +418,7 @@ export class IndicatorEngine {
             : normalizeIndicatorSource(persistence.source);
         this._assertSourceAcyclic(persistenceId, source);
         this._assertSourceOutput(source, true);
-        const mergedParams = this._mergeParams(settings, params);
+        const mergedParams = this._mergeParams(settings, params, definition);
         let runtime: EngineRuntime;
         try {
             runtime = new IndicatorRuntime({
@@ -1363,7 +1377,12 @@ export class IndicatorEngine {
         const entry = this._indicators[idx];
         const type = entry.type;
         const settings = IndicatorSettings.getIndicator(type);
-        const merged = this._mergeParams(settings, { ...entry.params, ...newParams });
+        const patch = migrateIndicatorParameters(entry.definition, newParams);
+        const merged = this._mergeParams(
+            settings,
+            { ...entry.params, ...patch },
+            entry.definition,
+        );
         const styles = captureIndicatorStyles(entry);
         const targetPaneId = entry.paneId || '__main__';
         const persistenceId = entry.persistenceId;
@@ -1635,10 +1654,15 @@ export class IndicatorEngine {
         return data;
     }
 
-    _mergeParams(settings: IndicatorCatalogEntry, params: IndicatorParams | null): IndicatorParams {
+    _mergeParams(
+        settings: IndicatorCatalogEntry,
+        params: IndicatorParams | null,
+        definition: IndicatorDefinition,
+    ): IndicatorParams {
+        const canonical = migrateIndicatorParameters(definition, params);
         const merged: IndicatorParams = {};
         settings.params.forEach(p => {
-            merged[p.key] = (params && params[p.key] !== undefined) ? params[p.key] : p.default;
+            merged[p.key] = canonical[p.key] !== undefined ? canonical[p.key] : p.default;
         });
         return merged;
     }
@@ -1669,4 +1693,3 @@ export class IndicatorEngine {
     }
 
 }
-

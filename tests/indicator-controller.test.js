@@ -119,7 +119,7 @@ describe('IndicatorController', () => {
         });
 
         assert.equal(updated.id, 'cloud-primary');
-        assert.equal(updated.parameters.tenkan, 10);
+        assert.equal(updated.parameters.tenkanLength, 10);
         assert.deepEqual(updated.source, { kind: 'candle-field', field: 'hlc3' });
         assert.equal(updated.paneId, 'pane-b');
         assert.equal(updated.priceScaleId, 'left');
@@ -139,7 +139,7 @@ describe('IndicatorController', () => {
 
         assert.equal(commands.undo(), true);
         const undone = controller.get('cloud-primary');
-        assert.equal(undone.parameters.tenkan, 9);
+        assert.equal(undone.parameters.tenkanLength, 9);
         assert.deepEqual(undone.source, { kind: 'candles' });
         assert.equal(undone.paneId, null);
         assert.equal(undone.priceScaleId, null);
@@ -149,7 +149,7 @@ describe('IndicatorController', () => {
 
         assert.equal(commands.redo(), true);
         const redone = controller.get('cloud-primary');
-        assert.equal(redone.parameters.tenkan, 10);
+        assert.equal(redone.parameters.tenkanLength, 10);
         assert.equal(redone.outputs.find(output => output.id === 'tenkan').style.precision, 4);
         assert.equal(redone.visible, false);
         assert.equal(notifications.length, 3);

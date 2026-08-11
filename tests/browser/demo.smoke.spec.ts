@@ -4,7 +4,7 @@ test('boots the real chart stack and adds overlay and pane indicators', async ({
     const pageErrors: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
 
-    await page.goto('/demo/index.html');
+    await page.goto('/demo/terminal.html');
 
     // The demo starts with the main chart plus the default RSI pane.
     await expect(page.locator('#chartContainer canvas[data-sschart-layer="overlay"]')).toHaveCount(1);

@@ -6,6 +6,7 @@ import type {
     IndicatorPaintResult,
 } from './indicator-painter.js';
 import { registerIndicatorPainter } from './indicator-painter-registry.js';
+import { DefaultIndicatorPainter } from './default-painter.js';
 import { applyMappedRuntimePatch, valuePoint } from './runtime-patch.js';
 
 function setData(series: any[], index: number, data: any[]): void {
@@ -559,6 +560,7 @@ export function registerBuiltInIndicatorPainters(): void {
     if (builtInPaintersRegistered) return;
     builtInPaintersRegistered = true;
 
+    registerIndicatorPainter('line', () => new DefaultIndicatorPainter());
     registerIndicatorPainter('band', () => new BandPainter());
     registerIndicatorPainter('macd-histogram', () => new MacdHistogramPainter('macd'));
     registerIndicatorPainter('ppo-histogram', () => new MacdHistogramPainter('ppo'));
@@ -567,8 +569,7 @@ export function registerBuiltInIndicatorPainters(): void {
         { key: 'd', title: 'D', style: 2 },
     ]));
     registerIndicatorPainter('adx', () => new LinesPainter([
-        { key: 'plusDI', title: '+DI' },
-        { key: 'minusDI', title: '-DI' },
+        { key: 'dx', title: 'DX' },
         { key: 'adx', title: 'ADX', width: 2 },
     ]));
     registerIndicatorPainter('alligator', () => new LinesPainter([

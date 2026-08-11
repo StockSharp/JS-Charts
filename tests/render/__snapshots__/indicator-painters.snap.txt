@@ -3,6 +3,11 @@ output("value")
 addSeries("line", {"color":"#e57373","lineWidth":2,"title":"TestIndicator"}, data[5])
 => series: 1
 
+## line
+output("value")
+addSeries("line", {"color":"#e57373","lineWidth":2,"title":"TestIndicator"}, data[5])
+=> series: 1
+
 ## band
 output("upper")
 output("lower")
@@ -35,13 +40,11 @@ addSeries("line", {"color":"#64b5f6","lineWidth":1,"lineStyle":2,"title":"D"}, d
 => series: 2
 
 ## adx
-output("plusDI")
-addSeries("line", {"color":"#e57373","lineWidth":2,"lineStyle":0,"title":"+DI"}, data[5])
-output("minusDI")
-addSeries("line", {"color":"#64b5f6","lineWidth":1,"lineStyle":0,"title":"-DI"}, data[5])
+output("dx")
+addSeries("line", {"color":"#e57373","lineWidth":2,"lineStyle":0,"title":"DX"}, data[5])
 output("adx")
-addSeries("line", {"color":"#81c784","lineWidth":2,"lineStyle":0,"title":"ADX"}, data[5])
-=> series: 3
+addSeries("line", {"color":"#64b5f6","lineWidth":2,"lineStyle":0,"title":"ADX"}, data[5])
+=> series: 2
 
 ## alligator
 output("jaw")

@@ -237,7 +237,7 @@ describe('indicator source binding', () => {
         const fractals = engine.add('Fractals', { length: 5 }, '__main__', {
             persistenceId: 'fractals',
         });
-        const dependent = engine.add('ExponentialMovingAverage', { length: 2 }, '__main__', {
+        const dependent = engine.add('ExponentialMovingAverage', { length: 1 }, '__main__', {
             persistenceId: 'fractal-average',
             source: {
                 kind: IndicatorSourceKind.IndicatorOutput,
@@ -250,7 +250,8 @@ describe('indicator source binding', () => {
             [sourceCandles[8].time, -4],
         ]);
         assert.deepEqual(closes(dependent.seriesRefs[0]), [
-            [sourceCandles[8].time, -3.5],
+            [sourceCandles[2].time, -3],
+            [sourceCandles[8].time, -4],
         ]);
         const runtime = dependent.runtime;
         const setDataCalls = dependent.seriesRefs[0].setDataCalls;
@@ -262,7 +263,9 @@ describe('indicator source binding', () => {
         assert.deepEqual(closes(fractals.seriesRefs[1]), [
             [sourceCandles[2].time, -3],
         ]);
-        assert.deepEqual(closes(dependent.seriesRefs[0]), []);
+        assert.deepEqual(closes(dependent.seriesRefs[0]), [
+            [sourceCandles[2].time, -3],
+        ]);
         assert.equal(dependent.runtime, runtime);
         assert.equal(dependent.seriesRefs[0].setDataCalls, setDataCalls);
     });

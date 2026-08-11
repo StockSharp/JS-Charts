@@ -6,7 +6,7 @@ import type {
 } from './indicator-painter.js';
 import { applyMappedRuntimePatch, valuePoint } from './runtime-patch.js';
 
-/** Plain-line fallback. It is deliberately not registered under a catalog name. */
+/** Plain-line painter used both as the fallback and by the catalog's explicit `line` kind. */
 export class DefaultIndicatorPainter implements IndicatorPainter {
     paint(context: IndicatorPainterContext): IndicatorPaintResult {
         // `context.entry` is the shell-owned catalog entry (typed `any` on the painter contract),

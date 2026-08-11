@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('edits inputs, source, pane, scale and every output through the controller', async ({ page }) => {
-    await page.goto('/demo/index.html');
+    await page.goto('/demo/terminal.html');
     await page.waitForFunction(() => (
         (window as any)._indicatorController?.indicators().length >= 2
     ));

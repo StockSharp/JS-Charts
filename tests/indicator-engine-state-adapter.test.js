@@ -175,6 +175,41 @@ describe('IndicatorEngineStateAdapter', () => {
         assert.deepEqual(engine.calls, []);
     });
 
+    it('migrates pre-2.x kinds and parameter names to the canonical catalog', () => {
+        const engine = new IndicatorEngine();
+        engine.setRenderer(new IndicatorRenderer(rendererChart()));
+        engine.setCandles([]);
+
+        const macd = engine.add('MovingAverageConvergenceDivergence', {
+            fastLength: 4, slowLength: 9, signalLength: 3,
+        }, '__main__');
+        assert.equal(macd.type, 'MovingAverageConvergenceDivergenceHistogram');
+        assert.deepEqual(macd.params, {
+            shortMaLength: 4, longMaLength: 9, signalMaLength: 3,
+        });
+        assert.deepEqual(macd.outputNames, ['macd', 'signal', 'histogram']);
+
+        const ppo = engine.add('PercentagePriceOscillator', {
+            shortLength: 5, longLength: 10, signalLength: 4,
+        }, '__main__');
+        assert.equal(ppo.type, 'PercentagePriceOscillatorHistogram');
+        assert.deepEqual(ppo.params, {
+            shortPeriod: 5, longPeriod: 10, signalMaLength: 4,
+        });
+
+        const envelope = engine.add('Envelope', {
+            length: 20, percent: 2.5,
+        }, '__main__');
+        assert.equal(envelope.params.shift, 0.025);
+        assert.equal(Object.hasOwn(envelope.params, 'percent'), false);
+
+        const stochastic = engine.add('FastStochastic', {
+            kPeriod: 7, dPeriod: 3,
+        }, '__main__');
+        assert.equal(stochastic.type, 'StochasticOscillator');
+        assert.deepEqual(stochastic.params, { kLength: 7, dLength: 3 });
+    });
+
     it('round-trips built-in multi-series styles and keeps the id on parameter edit', async () => {
         const chart = rendererChart();
         const engine = new IndicatorEngine();
