@@ -44,6 +44,10 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
     },
+    "./indicators": {
+      "types": "./dist/types/chart/indicators/index.d.ts",
+      "import": "./dist/esm/chart/indicators/index.js"
+    },
     "./orderflow": {
       "types": "./dist/types/orderflow/index.d.ts",
       "import": "./dist/esm/orderflow/index.js"

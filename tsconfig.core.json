@@ -5,6 +5,8 @@
   },
   "include": [
     "src/index.ts",
+    "src/chart/indicators/index.ts",
+    "src/chart/chart-globals.d.ts",
     "src/core/**/*.ts",
     "src/series-spacing.ts"
   ]
