@@ -245,26 +245,33 @@ describe('indicator source binding', () => {
                 outputId: 'down',
             },
         });
+        // The pivot at bar 8 needs bar 10 as its right wing, and bar 10 is the one still forming --
+        // StockSharp's FractalPart answers a non-final input with an empty value, so only the pivot
+        // at bar 2 is confirmed so far.
         assert.deepEqual(closes(fractals.seriesRefs[1]), [
             [sourceCandles[2].time, -3],
-            [sourceCandles[8].time, -4],
         ]);
         assert.deepEqual(closes(dependent.seriesRefs[0]), [
             [sourceCandles[2].time, -3],
-            [sourceCandles[8].time, -4],
         ]);
         const runtime = dependent.runtime;
         const setDataCalls = dependent.seriesRefs[0].setDataCalls;
 
-        sourceCandles.at(-1).low = -5;
+        // Closing bar 10 confirms the pivot, and it has to reach the dependent indicator on the
+        // source bar it belongs to rather than on the bar that confirmed it.
+        sourceCandles.push({
+            time: sourceCandles.at(-1).time + 60, open: 1, high: 2, low: 0, close: 1, volume: 1,
+        });
         engine.onLiveUpdate();
         await new Promise(resolve => setTimeout(resolve, 10));
 
         assert.deepEqual(closes(fractals.seriesRefs[1]), [
             [sourceCandles[2].time, -3],
+            [sourceCandles[8].time, -4],
         ]);
         assert.deepEqual(closes(dependent.seriesRefs[0]), [
             [sourceCandles[2].time, -3],
+            [sourceCandles[8].time, -4],
         ]);
         assert.equal(dependent.runtime, runtime);
         assert.equal(dependent.seriesRefs[0].setDataCalls, setDataCalls);

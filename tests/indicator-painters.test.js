@@ -644,9 +644,14 @@ describe('indicator painters', () => {
         )));
         const bandSeries = entries[7].seriesRefs[0];
         const bandPoint = bandSeries.data[bandSeries.data.length - 1];
-        assert.equal(bandSeries.updateCalls, 1);
+        // A Bollinger band holds still while the bar forms. StockSharp's BollingerBand reads
+        // `_ma.GetCurrentValue() + Width * _dev.GetCurrentValue()`, and BaseIndicator.Process only
+        // writes to the container on a final input -- so both operands are the last committed ones
+        // and the band cannot move until the bar closes. Its middle line, computed directly, does.
+        assert.equal(bandSeries.updateCalls, 0);
         assert.equal(typeof bandPoint.upper, 'number');
         assert.equal(typeof bandPoint.lower, 'number');
+        assert.ok(entries[7].seriesRefs.slice(1).some((series) => series.updateCalls === 1));
         assert.ok(entries[8].seriesRefs.every((series) => series.updateCalls === 1));
         assert.ok(entries[9].seriesRefs.every((series) => series.updateCalls === 1));
         assert.ok(entries[10].seriesRefs.some((series) => series.updateCalls === 1));
@@ -700,7 +705,9 @@ describe('indicator painters', () => {
         assert.ok(entries.every((entry) => entry.runtime.committedCount === 40));
         assert.ok(entries.every((entry) => entry.runtime.retainedFrom === 40));
         assert.ok(entries.every((entry) => entry.runtime.inputs().length === 0));
-        assert.equal(entries[12].seriesRefs[3].updateCalls, 1);
+        // The cloud is drawn from two outputs, and closing the bar replaces the span each of them
+        // reported for it -- one bounded update per edge, still no setData pass.
+        assert.equal(entries[12].seriesRefs[3].updateCalls, 2);
         const values = engine.getValuesAt(candles[candles.length - 1].time);
         const formingValueGaps = new Set(['BalanceOfPower', 'Peak', 'Trough']);
         assert.deepEqual(values.filter(item => !formingValueGaps.has(item.type)
@@ -1551,34 +1558,35 @@ describe('indicator painters', () => {
         const [up, down] = entry.seriesRefs;
 
         assert.ok(entry.runtime);
+        // The up pivot at bar 2 is confirmed by bar 4, which has closed. The down pivot at bar 6
+        // needs bar 8 as its right wing, and bar 8 is the one still forming -- StockSharp's
+        // FractalPart answers a non-final input with an empty value before it reads the candle at
+        // all, so a forming bar confirms nothing.
         assert.deepEqual(up.data, [{ time: candles[2].time, value: 5 }]);
-        assert.deepEqual(down.data, [{ time: candles[6].time, value: -3 }]);
-        assert.deepEqual(engine.getValuesAt(candles[6].time)[0].values, {
-            up: null,
-            down: -3,
-        });
-        assert.deepEqual(engine.getValuesAt(candles[8].time)[0].values, {
-            up: null,
-            down: null,
-        });
-
-        candles[8].low = -4;
-        engine.onLiveUpdate();
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        assert.equal(up.setDataCalls, 1);
-        assert.equal(down.setDataCalls, 1);
-        assert.equal(down.popCalls, 1);
         assert.deepEqual(down.data, []);
         assert.deepEqual(engine.getValuesAt(candles[6].time)[0].values, {
             up: null,
             down: null,
         });
 
+        // A forming bar changing its low still confirms nothing, so nothing is painted or dropped.
+        candles[8].low = -4;
+        engine.onLiveUpdate();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(up.setDataCalls, 1);
+        assert.equal(down.setDataCalls, 1);
+        assert.equal(down.popCalls, 0);
+        assert.deepEqual(down.data, []);
+
+        // Closing bar 8 -- by appending the bar that now forms in its place -- confirms the pivot,
+        // and it arrives as a streamed update rather than a full repaint.
         candles[8].low = 0;
+        candles.push({
+            time: candles[8].time + 60, open: 0, high: 1, low: 0, close: 0, volume: 0,
+        });
         engine.onLiveUpdate();
         await new Promise((resolve) => setTimeout(resolve, 10));
         assert.equal(down.setDataCalls, 1);
-        assert.equal(down.updateCalls, 1);
         assert.deepEqual(down.data, [{ time: candles[6].time, value: -3 }]);
         assert.deepEqual(engine.getValuesAt(candles[6].time)[0].values, {
             up: null,
