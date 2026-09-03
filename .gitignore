@@ -10,3 +10,6 @@ tests/browser/fixtures/_dist/
 # behind when it moved out -- and it took its own .gitignore with it, so nothing covered them.
 bin/
 obj/
+
+# npm pack output: a build artifact, like dist/ above.
+*.tgz

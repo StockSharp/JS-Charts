@@ -10,6 +10,22 @@ export * from './persistence/index.js';
 export * from './workspace/index.js';
 export * from './orderflow/index.js';
 export * from './trading/index.js';
+export type { IndicatorPaneChart, IndicatorPaneHost } from './chart/indicators/pane-host.js';
+
+// Public API module: chart/indicators/pane-host.d.ts
+export interface IndicatorPaneChart {
+    priceScale(scaleId?: string): {
+        applyOptions(options: Record<string, unknown>): void;
+    };
+    applyOptions(options?: Record<string, unknown>): void;
+}
+export interface IndicatorPaneHost {
+    getPaneByMeasure(measure: string | null): string | null;
+    addPane(label: string, measure: string | null): string | null;
+    getChart(paneId: string): IndicatorPaneChart | null;
+    removePane(paneId: string): void;
+    restorePane?(paneId: string): string | null;
+}
 
 // Public API module: core/chart-api.d.ts
 import { type TimeScaleFormatter } from '../time/time-axis-formatter.js';

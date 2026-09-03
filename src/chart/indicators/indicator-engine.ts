@@ -55,6 +55,7 @@ import {
 } from '../../indicator-parameter-migration.js';
 import type { ChartPaneManager } from '../chart-pane-manager.js';
 import type { IndicatorStyleSeries } from './indicator-styles.js';
+import type { IndicatorPaneChart, IndicatorPaneHost } from './pane-host.js';
 
 /** Legacy server/calc payloads belong to the chart boundary, not the indicator package API. */
 interface IndicatorPoint {
@@ -251,7 +252,7 @@ export class IndicatorEngine {
     // through their own module boundaries (IndicatorRenderer / ChartPaneManager below), and
     // both are absent until the host wires them up.
     _renderer: any;
-    _paneManager: any;
+    _paneManager: IndicatorPaneHost | null;
     _symbol: string | null;
     _timeframe: number | null;
     // Read-only to the engine: the window belongs to whoever called setCandles, and the chart
@@ -276,7 +277,7 @@ export class IndicatorEngine {
     }
 
     setRenderer(renderer: IndicatorRenderer) { this._renderer = renderer; }
-    setPaneManager(paneManager: ChartPaneManager) { this._paneManager = paneManager; }
+    setPaneManager(paneManager: IndicatorPaneHost) { this._paneManager = paneManager; }
 
     setSymbol(symbol: string | null) { this._symbol = symbol; }
     setTimeframe(timeframe: number | null) { this._timeframe = timeframe; }
@@ -493,7 +494,7 @@ export class IndicatorEngine {
 
     _renderData(entry: IndicatorEntry, data: IndicatorRenderData) {
         const settings = IndicatorSettings.getIndicator(entry.type);
-        const chart = entry.paneId ? this._paneManager.getChart(entry.paneId) : null;
+        const chart = entry.paneId && this._paneManager ? this._paneManager.getChart(entry.paneId) : null;
         if (!entry.seriesRefs.length) {
             entry.seriesRefs = this._renderer.render(entry, data, chart, settings) || [];
             entry.colors = this._renderer.getLastColors();
@@ -1027,7 +1028,7 @@ export class IndicatorEngine {
     /// range, with the same margins so each study uses the full pane height. The
     /// engine draws axes only for 'right'/'left', so these extra scales stay
     /// invisible — they exist purely to keep the overlays from squashing.
-    _applyPaneScale(entry: IndicatorEntry, chart: IChartApi | null) {
+    _applyPaneScale(entry: IndicatorEntry, chart: IndicatorPaneChart | null) {
         const sid = entry.priceScaleId || entry.paneScaleId;
         if (!sid) return;
         for (const s of entry.seriesRefs) {
@@ -1279,7 +1280,7 @@ export class IndicatorEngine {
             throw new Error('sschart: indicator renderer cannot move series');
 
         let nextPaneId: string | null = null;
-        let targetChart: IChartApi | null = null;
+        let targetChart: IndicatorPaneChart | null = null;
         let createdPaneId: string | null = null;
         let restoredPaneId: string | null = null;
         if (!toMain) {
@@ -1309,8 +1310,8 @@ export class IndicatorEngine {
         try {
             this._renderer.moveSeries(entry, targetChart);
         } catch (error) {
-            if (createdPaneId) this._paneManager.removePane(createdPaneId);
-            if (restoredPaneId) this._paneManager.removePane(restoredPaneId);
+            if (createdPaneId) this._paneManager?.removePane(createdPaneId);
+            if (restoredPaneId) this._paneManager?.removePane(restoredPaneId);
             throw error;
         }
         entry.paneId = nextPaneId;

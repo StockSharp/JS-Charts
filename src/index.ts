@@ -11,3 +11,7 @@ export * from './persistence/index.js';
 export * from './workspace/index.js';
 export * from './orderflow/index.js';
 export * from './trading/index.js';
+
+// The pane contract an indicator engine is driven through, so a host that lays out its own
+// panes can name what it has to implement.
+export type { IndicatorPaneChart, IndicatorPaneHost } from './chart/indicators/pane-host.js';
