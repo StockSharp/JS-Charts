@@ -145,7 +145,7 @@ export function createChartUi(chart: ChartUiChart, options: ChartUiOptions): Cha
     let openForPane: (paneId: string) => void = () => { /* assigned below */ };
 
     const paneManager = new ChartPaneManager({
-        containerId: options.container.id,
+        container: options.container,
         host,
         onAddIndicatorToPane: paneId => openForPane(paneId),
         onRemovePane: paneId => {

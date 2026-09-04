@@ -347,7 +347,7 @@ interface PaneSnapshot {
     leftPriceScale?: ResolvedPriceScaleOptions;
 }
 export interface ChartPaneManagerOptions {
-    readonly containerId: string;
+    readonly container: HTMLElement;
     readonly host: ChartUiHost;
     onAddIndicatorToPane(paneId: string): void;
     onRemovePane(paneId: string): void;
@@ -361,7 +361,7 @@ export declare class ChartPaneManager {
     _host: ChartUiHost;
     _onAddIndicatorToPane: (paneId: string) => void;
     _onRemovePane: (paneId: string) => void;
-    _containerId: string;
+    _container: HTMLElement;
     _mainContainer: HTMLElement | null;
     _panes: Map<string, PaneEntry>;
     _removedPanes: Map<string, PaneSnapshot>;

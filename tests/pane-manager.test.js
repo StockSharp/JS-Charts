@@ -130,7 +130,7 @@ function chartDouble() {
 }
 
 /** Mount the chrome over a chart element the way the terminal does, and hand back its wiring. */
-function mount({ containerId = 'chartContainer', chart = chartDouble() } = {}) {
+function mount({ chart = chartDouble() } = {}) {
     const container = dom.document.createElement('div');
     // mini-dom's element has no insertBefore, and wrapping the chart element is the one place the
     // manager needs it. Real semantics rather than an appendChild stand-in: the wrapper has to end
@@ -143,7 +143,6 @@ function mount({ containerId = 'chartContainer', chart = chartDouble() } = {}) {
     };
 
     const chartEl = dom.document.createElement('div');
-    chartEl.setAttribute('id', containerId);
     // A chart element 400px tall whose top edge is 50px down the viewport, so a routed right-click
     // proves the pane band is hit-tested against the element and not against the raw client point.
     chartEl.getBoundingClientRect = () => ({ top: 50, left: 0, width: 600, height: 400 });
@@ -152,7 +151,7 @@ function mount({ containerId = 'chartContainer', chart = chartDouble() } = {}) {
 
     const asked = { addIndicatorToPane: [], removePane: [] };
     const manager = new ChartPaneManager({
-        containerId,
+        container: chartEl,
         host: standaloneHost,
         onAddIndicatorToPane: (paneId) => asked.addIndicatorToPane.push(paneId),
         onRemovePane: (paneId) => asked.removePane.push(paneId),
@@ -357,12 +356,11 @@ describe('ChartPaneManager pane bookkeeping', () => {
         const container = dom.document.createElement('div');
         container.insertBefore = (node) => container.appendChild(node);
         const chartEl = dom.document.createElement('div');
-        chartEl.setAttribute('id', 'chartContainer');
         container.appendChild(chartEl);
         dom.document.body.appendChild(container);
 
         const manager = new ChartPaneManager({
-            containerId: 'chartContainer',
+            container: chartEl,
             host: standaloneHost,
             onAddIndicatorToPane() { throw new Error('no pane exists to add to'); },
             onRemovePane() { throw new Error('no pane exists to remove'); },

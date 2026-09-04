@@ -109,8 +109,12 @@ interface PaneSnapshot {
 
 /// What a pane's own chrome needs from the page it is mounted in.
 export interface ChartPaneManagerOptions {
-    /// The element id of the chart the panes hang off.
-    readonly containerId: string;
+    /// The element the chart was created in. The panes hang off it.
+    ///
+    /// The element itself, not its id: a host that builds its panel before attaching it to the
+    /// document - which is what every docking library does - has no id to look up yet, and the
+    /// lookup this replaced failed silently, leaving no pane chrome and no legend with it.
+    readonly container: HTMLElement;
 
     /// Translation and formatting for the header and the per-pane menu.
     readonly host: ChartUiHost;
@@ -131,7 +135,7 @@ export class ChartPaneManager {
     _host: ChartUiHost;
     _onAddIndicatorToPane: (paneId: string) => void;
     _onRemovePane: (paneId: string) => void;
-    _containerId: string;
+    _container: HTMLElement;
     _mainContainer: HTMLElement | null;
     _panes: Map<string, PaneEntry>;
     _removedPanes: Map<string, PaneSnapshot>;
@@ -144,7 +148,7 @@ export class ChartPaneManager {
     _onContextMenu: ((event: MouseEvent) => void) | null;
 
     constructor(options: ChartPaneManagerOptions) {
-        this._containerId = options.containerId;
+        this._container = options.container;
         this._host = options.host;
         this._onAddIndicatorToPane = options.onAddIndicatorToPane;
         this._onRemovePane = options.onRemovePane;
@@ -164,7 +168,7 @@ export class ChartPaneManager {
     // chart — the guard below is what makes that a no-op rather than a crash.
     init(mainChart: IChartApi | null) {
         this._mainChart = mainChart;
-        const chartEl = document.getElementById(this._containerId);
+        const chartEl = this._container;
         if (!chartEl || !mainChart?.addPane) return;
 
         this._mainContainer = chartEl.parentElement;
@@ -371,7 +375,7 @@ export class ChartPaneManager {
     dispose() {
         for (const paneId of Array.from(this._panes.keys())) this.removePane(paneId);
         this._removedPanes.clear();
-        const chartEl = document.getElementById(this._containerId);
+        const chartEl = this._container;
         if (chartEl && this._onPointerMove) {
             chartEl.removeEventListener('pointermove', this._onPointerMove);
             chartEl.removeEventListener('pointerup', this._onPointerMove);
