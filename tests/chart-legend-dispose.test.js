@@ -1,140 +1,85 @@
 // ChartLegend teardown: every listener and node it installed has to come back.
+//
+// Construction moved into the constructor when the UI layer became its own entry point: the legend
+// is handed the element it paints into, the host that words its strings and numbers, the pane host
+// that owns sub-pane headers, the chart types the page's switcher implements and the layer its
+// floating menu opens in. Nothing is looked up by id and nothing is read off window. What dispose()
+// owes did not change, and the per-instance menu adds one guarantee worth pinning: the menu a
+// legend takes down is its own, so a second legend on the page survives the first one disposing.
+//
+// The DOM double lives in tests/mini-dom.js — the legend is written in innerHTML, querySelector and
+// event bubbling, none of which tests/headless-dom.js offers.
 
-const { describe, it, afterEach } = require('node:test');
+const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createChart, LineSeries } = require('../src/index.js');
-const { createHeadlessDom } = require('./headless-dom.js');
-const { createRecordingContext } = require('./render/recording-context.js');
+const { installMiniDom } = require('./mini-dom.js');
+const dom = installMiniDom();
+
+// The module under test is required after the DOM double is in place.
 const { ChartLegend } = require('../src/chart/chart-legend.js');
-const { ChartPaneManager } = require('../src/chart/chart-pane-manager.js');
-const {
-    ChartOrderStatus,
-    ChartOrderTimeInForce,
-    ChartOrderType,
-    TradingIntentOutcomeStatus,
-    TradingLayer,
-    TradingSide,
-} = require('../src/trading/index.js');
+const { standaloneHost } = require('../src/chart/chart-host.js');
 
-let dom = null;
-let restoreExtras = [];
+// ---------------------------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------------------------
 
-afterEach(() => {
-    for (const restore of restoreExtras.reverse()) restore();
-    restoreExtras = [];
-    dom?.restore();
-    dom = null;
-});
+/** The renderings the page says its switcher implements — the legend no longer decides this. */
+const CHART_TYPES = [
+    { value: 'candles', label: 'Candles', icon: 'bi bi-bar-chart-fill' },
+    { value: 'line', label: 'Line', icon: 'bi bi-graph-up' },
+];
 
-/** Install a global for the duration of one test (the headless DOM double has no ResizeObserver). */
-function installGlobal(name, value) {
-    const had = name in globalThis;
-    const previous = globalThis[name];
-    globalThis[name] = value;
-    restoreExtras.push(() => {
-        if (had) globalThis[name] = previous;
-        else delete globalThis[name];
-    });
+function clickEvent(target) {
+    return { type: 'click', target, bubbles: true };
 }
 
-// ---------------------------------------------------------------------------
-// 1.1 — one throwing primitive strands a save()+clip() on the shared context
-// ---------------------------------------------------------------------------
-
-/**
- * Mount a chart on the headless DOM, but hand every canvas a RECORDING 2d context so the
- * ordered save/clip/restore log of the shared context is observable from the test.
- */
-function mountRecording(options = {}) {
-    dom = createHeadlessDom();
-    const createElement = dom.document.createElement;
-    const recorded = new Map();
-    dom.document.createElement = (tagName) => {
-        const element = createElement(tagName);
-        element.getContext = (kind) => {
-            if (kind !== '2d') return null;
-            if (element._recording === undefined) {
-                element._recording = createRecordingContext();
-                recorded.set(element, element._recording.ops);
-            }
-            return element._recording.ctx;
-        };
-        return element;
-    };
-    const chart = createChart(dom.host, { width: 800, height: 400, ...options });
-    const layer = (name) => {
-        const root = dom.host.children[0];
-        const canvas = root.children.find((child) => child.dataset.sschartLayer === name);
-        assert.ok(canvas !== undefined, `the '${name}' layer must exist`);
-        const ops = recorded.get(canvas);
-        assert.ok(ops !== undefined, `the '${name}' layer must have taken a 2d context`);
-        return ops;
-    };
-    return { chart, layer };
+function bar(time, close) {
+    return { time, open: close - 1, high: close + 2, low: close - 2, close, volume: 1000 };
 }
 
 /**
- * Replay a recorded op log as a canvas state stack.
- * Returns the saves that were never restored, each carrying the clip left installed under it.
+ * A pane host in the shape of LegendPaneHost: it hands back an element per pane and keeps them, so
+ * a test can count the handlers the legend bound on one.
+ *
+ * mini-dom has no replaceChildren and the legend swaps a pane's rows with it, so the element gets
+ * the one member the double is missing.
  */
-function danglingSaves(ops) {
-    const stack = [];
-    let lastRect = null;
-    for (const op of ops) {
-        if (op.startsWith('rect(')) lastRect = op;
-        else if (op === 'save()') stack.push({ clip: null });
-        else if (op === 'restore()') stack.pop();
-        else if (op === 'clip()' && stack.length > 0) stack[stack.length - 1].clip = lastRect;
-    }
-    return stack;
-}
-
-/** How deep the state stack is at the last full-canvas clear — i.e. what a later frame draws inside. */
-function stackDepthAtLastClear(ops, clearOp) {
-    let depth = 0;
-    let atClear = null;
-    for (const op of ops) {
-        if (op === 'save()') depth++;
-        else if (op === 'restore()') depth = Math.max(0, depth - 1);
-        else if (op === clearOp) atClear = depth;
-    }
-    assert.ok(atClear !== null, `expected a '${clearOp}' op in the log`);
-    return atClear;
-}
-
-/**
- * A primitive that throws out of paneViews() — user code the per-pane block calls with no guard.
- * `whenOverlay` picks the pass: drawBase runs the background/bottom/normal passes, drawOverlay the
- * top one, and the overlay log only starts growing once drawOverlay has cleared its canvas.
- */
-function explodingPrimitive(message, overlayOps = null) {
-    let mark = 0;
+function paneHostStub() {
+    const elements = new Map();
     return {
-        attached() { },
-        detached() { },
-        updateAllViews() { mark = overlayOps === null ? 0 : overlayOps.length; },
-        paneViews() {
-            const inOverlayPass = overlayOps !== null && overlayOps.length > mark;
-            if (overlayOps === null || inOverlayPass) throw new Error(message);
-            return [];
+        elements,
+        getValuesElement(paneId) {
+            let element = elements.get(paneId);
+            if (element === undefined) {
+                element = document.createElement('div');
+                element.replaceChildren = (...nodes) => {
+                    for (const child of element.childNodes) child.parentElement = null;
+                    element.childNodes = [];
+                    for (const node of nodes) element.appendChild(node);
+                };
+                elements.set(paneId, element);
+            }
+            return element;
         },
     };
 }
 
-const LINE = [
-    { time: 3600, value: 10 },
-    { time: 7200, value: 12 },
-    { time: 10800, value: 11 },
-];
-
-const CLEAR = 'clearRect(0, 0, 800, 400)';
-
+/** The slice of the indicator engine the legend talks to (LegendIndicatorEngine). */
+function indicatorEngineStub(values) {
+    return {
+        onChange: null,
+        values,
+        removed: [],
+        getIndicators() { return this.values.map((value) => ({ id: value.id })); },
+        getValuesAt() { return this.values; },
+        remove(id) { this.removed.push(id); },
+    };
+}
 
 function legendFixture() {
-    dom = createHeadlessDom();
-    const element = dom.document.createElement('div');
-    dom.document.getElementById = (id) => (id === 'chartLegend' ? element : null);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
 
     const crosshairHandlers = [];
     const chart = {
@@ -146,22 +91,32 @@ function legendFixture() {
         clearCrosshairPosition() { },
     };
 
-    const originalOnChange = () => { };
-    const engine = {
-        onChange: originalOnChange,
-        getIndicators: () => [],
-        getValuesAt: () => [],
-        remove() { },
-    };
-    return { element, chart, crosshairHandlers, engine, originalOnChange };
+    const paneHost = paneHostStub();
+    const legend = new ChartLegend({
+        container,
+        host: standaloneHost,
+        paneHost,
+        chartTypes: CHART_TYPES,
+        menuLayer: () => document.body,
+    });
+    return { container, chart, crosshairHandlers, paneHost, legend };
 }
+
+beforeEach(() => {
+    document.body.childNodes = [];
+    dom.document.clearListeners();
+});
+
+// ---------------------------------------------------------------------------------------------
 
 describe('ChartLegend is detachable', () => {
     it('releases its DOM listeners, its crosshair subscription and the engine hook it wrapped', () => {
-        const { element, chart, crosshairHandlers, engine, originalOnChange } = legendFixture();
+        const { container, chart, crosshairHandlers, legend } = legendFixture();
+        const originalOnChange = () => { };
+        const engine = indicatorEngineStub([]);
+        engine.onChange = originalOnChange;
 
-        const legend = new ChartLegend();
-        legend.init('chartLegend', chart);
+        legend.init(chart);
         legend.setIndicatorEngine(engine);
 
         assert.equal(crosshairHandlers.length, 1, 'sanity: init() subscribed to crosshair moves');
@@ -174,7 +129,7 @@ describe('ChartLegend is detachable', () => {
         else if (teardown === 'destroy()') legend.destroy();
 
         const domListeners = ['mouseenter', 'mouseleave', 'click']
-            .reduce((total, type) => total + element.listenerCount(type), 0);
+            .reduce((total, type) => total + container.listenerCount(type), 0);
 
         assert.deepStrictEqual(
             {
@@ -194,24 +149,125 @@ describe('ChartLegend is detachable', () => {
             + 'and the irreversible engine.onChange wrapper all outlive the legend',
         );
     });
+
+    it('releases the click handler it bound on a sub-pane values element', () => {
+        const { chart, paneHost, legend } = legendFixture();
+        const engine = indicatorEngineStub([{
+            id: 7,
+            type: 'rsi',
+            name: 'RSI',
+            values: { value: 55 },
+            colors: ['#4caf50'],
+            paneId: 'pane-1',
+        }]);
+
+        legend.init(chart);
+        legend.setIndicatorEngine(engine);
+        legend.setRawCandles([bar(3600, 100)]);
+
+        const values = paneHost.elements.get('pane-1');
+        assert.ok(values !== undefined, 'sanity: the legend asked the pane host for its values element');
+        assert.equal(values.listenerCount('click'), 1,
+            'sanity: the legend answers clicks on the rows it painted into the pane header');
+
+        const remove = values.querySelector('.legend-remove-btn');
+        assert.ok(remove, 'sanity: the pane row carries the × button');
+        remove.dispatchEvent(clickEvent(remove));
+        assert.deepStrictEqual(engine.removed, [7], 'sanity: that button reaches the indicator engine');
+
+        legend.dispose();
+
+        remove.dispatchEvent(clickEvent(remove));
+        assert.deepStrictEqual(
+            { listeners: values.listenerCount('click'), removedAfterDispose: engine.removed },
+            { listeners: 0, removedAfterDispose: [7] },
+            'the values element belongs to the pane host and outlives the legend: a legend that '
+            + 'leaves its handler on it keeps answering clicks against an engine it no longer owns, '
+            + 'and the next legend mounted on the same pane collects a second handler',
+        );
+    });
+
+    it('leaves no closer behind when disposed between opening the menu and the deferred registration', async () => {
+        const { container, chart, legend } = legendFixture();
+        legend.init(chart);
+        legend.setRawCandles([bar(3600, 100)]);
+        legend.refresh();
+
+        const toggle = container.querySelector('.legend-ct-toggle');
+        assert.ok(toggle, 'the OHLCV strip must carry the chart-type toggle');
+        toggle.dispatchEvent(clickEvent(toggle));
+        assert.ok(document.querySelector('.chart-legend-floating-ct-menu'), 'sanity: the menu opened');
+
+        // Disposed inside the same tick — the closer's setTimeout has not run yet.
+        legend.dispose();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        assert.deepStrictEqual(
+            {
+                menu: document.querySelector('.chart-legend-floating-ct-menu'),
+                closers: dom.document.listenerCount('click'),
+            },
+            { menu: null, closers: 0 },
+            'the deferred registration must notice the menu it was opened for is gone: registering '
+            + 'anyway leaves a document listener holding a disposed legend for the life of the page',
+        );
+    });
+
+    it('takes down its own floating menu only, so a second legend keeps working', async () => {
+        const first = legendFixture();
+        const second = legendFixture();
+        for (const fixture of [first, second]) {
+            fixture.legend.init(fixture.chart);
+            fixture.legend.setRawCandles([bar(3600, 100)]);
+            fixture.legend.refresh();
+        }
+
+        const openMenu = (fixture) => {
+            const toggle = fixture.container.querySelector('.legend-ct-toggle');
+            assert.ok(toggle, 'the OHLCV strip must carry the chart-type toggle');
+            toggle.dispatchEvent(clickEvent(toggle));
+        };
+        // Both menus are opened before the tick elapses: the outside-click closers register from a
+        // setTimeout(0), and one already standing would close the other menu as it opens.
+        openMenu(first);
+        openMenu(second);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        assert.equal(document.querySelectorAll('.chart-legend-floating-ct-menu').length, 2,
+            'sanity: each legend opened a menu of its own in the layer they share');
+        assert.equal(dom.document.listenerCount('click'), 2,
+            'sanity: each menu registered its own outside-click closer');
+
+        let chosen = null;
+        second.legend.onChartTypeChange = (type) => { chosen = type; };
+
+        first.legend.dispose();
+
+        const menus = document.querySelectorAll('.chart-legend-floating-ct-menu');
+        assert.deepStrictEqual(
+            {
+                menus: menus.length,
+                survivorIsTheOtherLegends: menus[0] === second.legend._chartTypeMenu,
+                closers: dom.document.listenerCount('click'),
+            },
+            { menus: 1, survivorIsTheOtherLegends: true, closers: 1 },
+            'dispose() dismisses this instance\'s menu and this instance\'s closer: a teardown that '
+            + 'swept the document for .chart-legend-floating-ct-menu would tear the other tile\'s '
+            + 'open menu out from under the user',
+        );
+
+        const item = menus[0].querySelector('.legend-ct-item[data-type="line"]');
+        assert.ok(item, 'the surviving menu still offers the line item');
+        item.dispatchEvent(clickEvent(item));
+
+        assert.deepStrictEqual(
+            {
+                chosen,
+                menuAfterChoice: document.querySelector('.chart-legend-floating-ct-menu'),
+                closers: dom.document.listenerCount('click'),
+            },
+            { chosen: 'line', menuAfterChoice: null, closers: 0 },
+            'the second legend still answers its own menu after the first one was disposed',
+        );
+    });
 });
-
-// ---------------------------------------------------------------------------
-// 3.7 — window._chartPaneManager
-// ---------------------------------------------------------------------------
-
-function paneManagerFixture(containerId) {
-    const container = dom.document.createElement('div');
-    container.insertBefore = (node) => container.appendChild(node);
-    const chartElement = dom.document.createElement('div');
-    container.appendChild(chartElement);
-
-    const previousGetElementById = dom.document.getElementById;
-    dom.document.getElementById = (id) => (id === containerId
-        ? chartElement
-        : (previousGetElementById === undefined ? null : previousGetElementById(id)));
-
-    const manager = new ChartPaneManager(containerId);
-    manager.init({ addPane: () => { throw new Error('no pane is added by this test'); } });
-    return manager;
-}

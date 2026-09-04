@@ -1,337 +1,71 @@
-// Audit proofs for the UI stack (src/chart): 2.5, 2.6, 3.5, 3.8.
+// The floating chart-type menu behind the legend's toggle, and the document closer it opens with.
 //
-// Every test below asserts the behaviour the audit says is owed, so each one is red while the
-// finding lives. Nothing here is fixed — this file only pins the defect.
+// Three things about this menu are the page's business now, and each one is a constructor option:
+// which renderings it offers (`chartTypes` — the legend used to carry a list of its own, so a page
+// whose switcher drew something else could not offer it, and a page whose switcher drew less had
+// menu entries that did nothing), where it is appended (`menuLayer` — always document.body before,
+// which is invisible while a chart tile is fullscreen), and which container it belongs to. Nothing
+// is looked up on `window` or by element id, so two legends can live on one page — which is what
+// the second describe below is about: the old code closed menus with a document-wide sweep, and the
+// second tile opening its menu tore down the first tile's.
 //
-// tests/headless-dom.js gets a chart onto a browser-free host, but its element double has no
-// innerHTML, no querySelector and no getElementById, and ChartLegend / IndicatorDialog are written
-// entirely in those three. So this file carries a small DOM of its own: a real (tiny) HTML parser,
-// class/attribute selectors, dataset that writes through to attributes, and event dispatch that
-// actually bubbles — which is the part finding 3.5 turns on, because the stale document listener
-// only survives thanks to `contains()` answering true over a detached subtree.
+// The DOM double lives in tests/mini-dom.js. What this file leans on hardest is that its dispatch
+// really bubbles: the outside-click closer is a listener on the document and only ever sees a click
+// that got there, and `contains()` has to answer over a detached subtree or a closed menu would
+// look like an open one.
 
 const { describe, it, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
-// ---------------------------------------------------------------------------------------------
-// A minimal DOM, installed before the modules under test are required: src/chart/i18n.ts reads
-// window.__T once, at module-init time, so the dictionary has to exist before the first require.
-// ---------------------------------------------------------------------------------------------
+const { installMiniDom } = require('./mini-dom.js');
+const dom = installMiniDom();
 
-const DICTIONARY = {
-    // Keys the dialog looks up by their exact English text — proof that translation works at all.
-    Outputs: 'RENDERED-OUTPUTS',
-    Source: 'RENDERED-SOURCE',
-    // The stable, positional key the warning is owed (the file already uses this form for
-    // 'Add {0}', 'Edit {0}' and 'Effective: {0}').
-    'Source unavailable: {0}': 'RENDERED-UNAVAILABLE: {0}',
-    // A per-reason key is at least as good as the positional one -- better wording, and the slug
-    // never reaches the user. Either shape satisfies the invariant: the key is fixed text, so a
-    // dictionary can hold it.
-    'Source unavailable: the indicator it reads no longer exists': 'RENDERED-UNAVAILABLE: missing indicator',
-    'missing-indicator': 'RENDERED-MISSING-INDICATOR',
-    // Interpolated key that the current code actually asks for; deliberately absent, because a
-    // dictionary cannot enumerate one entry per enum value.
+// `fullscreenMenuLayer` asks whether the fullscreen element `instanceof HTMLElement`, and the DOM
+// double's elements are plain objects with no constructor to be an instance of. Answering by node
+// type is the whole of what that question means here.
+globalThis.HTMLElement = class HTMLElementDouble {
+    static [Symbol.hasInstance](value) { return value !== null && typeof value === 'object' && value.nodeType === 1; }
 };
 
-const VOID_TAGS = new Set(['input', 'br', 'img', 'hr', 'meta', 'link', 'option-void']);
-const TAG_RE = /<(\/)?([a-zA-Z][\w-]*)([^>]*)>/g;
-const ATTR_RE = /([\w:-]+)(?:\s*=\s*"([^"]*)")?/g;
-
-function decodeEntities(text) {
-    return String(text)
-        .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-        .replace(/&times;/g, '×')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&amp;/g, '&');
-}
-
-const dataAttributeName = (key) => `data-${String(key).replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
-const datasetKey = (name) => name.slice('data-'.length).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-
-/** dataset has to write through to attributes: the legend sets `row.dataset.indId` and then finds
- *  the row again with `.legend-indicator[data-ind-id="…"]`. */
-function makeDataset(attributes) {
-    return new Proxy({}, {
-        get: (_, key) => (typeof key === 'string' ? attributes.get(dataAttributeName(key)) : undefined),
-        set: (_, key, value) => { attributes.set(dataAttributeName(key), String(value)); return true; },
-        has: (_, key) => attributes.has(dataAttributeName(key)),
-        deleteProperty: (_, key) => { attributes.delete(dataAttributeName(key)); return true; },
-        ownKeys: () => [...attributes.keys()].filter((n) => n.startsWith('data-')).map(datasetKey),
-        getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true, value: undefined }),
-    });
-}
-
-function parseSelector(selector) {
-    return String(selector).split(',').map((part) => {
-        const compound = part.trim();
-        return {
-            tag: compound.match(/^([a-zA-Z][\w-]*)/)?.[1] ?? null,
-            id: compound.match(/#([\w-]+)/)?.[1] ?? null,
-            classes: [...compound.matchAll(/\.([\w-]+)/g)].map((m) => m[1]),
-            attrs: [...compound.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)]
-                .map((m) => ({ name: m[1], value: m[2] })),
-        };
-    });
-}
-
-function matchesCompound(element, compound) {
-    if (element.nodeType !== 1) return false;
-    if (compound.tag && element.tagName !== compound.tag.toUpperCase()) return false;
-    if (compound.id && element.getAttribute('id') !== compound.id) return false;
-    for (const cls of compound.classes) if (!element.classList.contains(cls)) return false;
-    for (const attr of compound.attrs) {
-        const actual = element.getAttribute(attr.name);
-        if (actual === null || actual === undefined) return false;
-        if (attr.value !== undefined && actual !== attr.value) return false;
-    }
-    return true;
-}
-
-function dispatchWithBubbling(node, event) {
-    if (event.target === undefined || event.target === null) event.target = node;
-    let stopped = false;
-    event.stopPropagation = () => { stopped = true; };
-    event.preventDefault = () => { };
-    const path = [];
-    for (let current = node; current; current = current.parentElement) path.push(current);
-    if (node.ownerDocument) path.push(node.ownerDocument);
-    for (const step of path) {
-        event.currentTarget = step;
-        step._fire(event);
-        if (stopped) break;
-    }
-    return true;
-}
-
-function createTextNode(document, text) {
-    return { nodeType: 3, ownerDocument: document, parentElement: null, textContent: String(text) };
-}
-
-function createElement(document, tagName) {
-    const attributes = new Map();
-    const listeners = new Map();
-
-    const element = {
-        nodeType: 1,
-        tagName: String(tagName).toUpperCase(),
-        ownerDocument: document,
-        childNodes: [],
-        parentElement: null,
-        style: {},
-        dataset: makeDataset(attributes),
-
-        getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
-        setAttribute(name, value) {
-            attributes.set(name, String(value));
-            if (['value', 'title', 'type', 'id', 'placeholder', 'href'].includes(name))
-                element[name] = String(value);
-            if (['checked', 'selected', 'hidden', 'disabled'].includes(name)) element[name] = true;
-        },
-        removeAttribute(name) { attributes.delete(name); },
-
-        get children() { return element.childNodes.filter((node) => node.nodeType === 1); },
-        appendChild(child) {
-            child.parentElement = element;
-            element.childNodes.push(child);
-            return child;
-        },
-        append(...nodes) { for (const node of nodes) element.appendChild(node); },
-        removeChild(child) {
-            const at = element.childNodes.indexOf(child);
-            if (at >= 0) element.childNodes.splice(at, 1);
-            child.parentElement = null;
-            return child;
-        },
-        remove() { element.parentElement?.removeChild(element); },
-
-        get textContent() {
-            return element.childNodes
-                .map((node) => (node.nodeType === 3 ? node.textContent : node.textContent))
-                .join('');
-        },
-        set textContent(value) {
-            for (const child of element.childNodes) child.parentElement = null;
-            element.childNodes = [];
-            if (value !== '') element.appendChild(createTextNode(document, value));
-        },
-
-        get innerHTML() { return element.childNodes.map(serialize).join(''); },
-        set innerHTML(html) {
-            for (const child of element.childNodes) child.parentElement = null;
-            element.childNodes = [];
-            for (const node of parseFragment(document, String(html))) element.appendChild(node);
-            for (const node of descendants(element)) if (node.tagName === 'SELECT') syncSelect(node);
-        },
-
-        querySelector(selector) { return element.querySelectorAll(selector)[0] ?? null; },
-        querySelectorAll(selector) {
-            const compounds = parseSelector(selector);
-            return descendants(element)
-                .filter((node) => compounds.some((compound) => matchesCompound(node, compound)));
-        },
-        matches(selector) {
-            return parseSelector(selector).some((compound) => matchesCompound(element, compound));
-        },
-        closest(selector) {
-            for (let current = element; current; current = current.parentElement)
-                if (current.nodeType === 1 && current.matches(selector)) return current;
-            return null;
-        },
-        contains(node) {
-            for (let current = node; current; current = current.parentElement)
-                if (current === element) return true;
-            return false;
-        },
-
-        addEventListener(type, listener, options) {
-            let bucket = listeners.get(type);
-            if (bucket === undefined) listeners.set(type, bucket = new Set());
-            bucket.add(listener);
-            options?.signal?.addEventListener?.('abort', () => bucket.delete(listener));
-        },
-        removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
-        dispatchEvent(event) { return dispatchWithBubbling(element, event); },
-        _fire(event) { for (const listener of [...(listeners.get(event.type) ?? [])]) listener(event); },
-        listenerCount(type) { return listeners.get(type)?.size ?? 0; },
-
-        getBoundingClientRect() {
-            return { x: 0, y: 0, top: 0, left: 0, right: 200, bottom: 20, width: 200, height: 20 };
-        },
-        focus() { },
-    };
-
-    Object.defineProperty(element, 'className', {
-        get: () => attributes.get('class') ?? '',
-        set: (value) => { attributes.set('class', String(value)); },
-        enumerable: true,
-    });
-    element.classList = {
-        add: (value) => {
-            const classes = new Set(element.className.split(/\s+/).filter(Boolean));
-            classes.add(value);
-            element.className = [...classes].join(' ');
-        },
-        remove: (value) => {
-            const classes = new Set(element.className.split(/\s+/).filter(Boolean));
-            classes.delete(value);
-            element.className = [...classes].join(' ');
-        },
-        toggle: (value, force) => {
-            const on = force ?? !element.classList.contains(value);
-            if (on) element.classList.add(value); else element.classList.remove(value);
-            return on;
-        },
-        contains: (value) => element.className.split(/\s+/).includes(value),
-    };
-    return element;
-}
-
-function descendants(root) {
-    const out = [];
-    const walk = (node) => {
-        for (const child of node.childNodes) {
-            out.push(child);
-            if (child.nodeType === 1) walk(child);
-        }
-    };
-    walk(root);
-    return out;
-}
-
-function syncSelect(select) {
-    const options = select.children.filter((child) => child.tagName === 'OPTION');
-    const selected = options.find((option) => option.selected === true) ?? options[0];
-    select.value = selected?.getAttribute('value') ?? '';
-    select.options = options;
-}
-
-function serialize(node) {
-    if (node.nodeType === 3) return node.textContent;
-    const tag = node.tagName.toLowerCase();
-    const cls = node.className ? ` class="${node.className}"` : '';
-    return `<${tag}${cls}>${node.childNodes.map(serialize).join('')}</${tag}>`;
-}
-
-function parseFragment(document, html) {
-    const roots = [];
-    const stack = [];
-    const push = (node) => {
-        const parent = stack[stack.length - 1];
-        if (parent) parent.appendChild(node); else roots.push(node);
-    };
-    let last = 0;
-    let match;
-    TAG_RE.lastIndex = 0;
-    while ((match = TAG_RE.exec(html)) !== null) {
-        if (match.index > last) push(createTextNode(document, decodeEntities(html.slice(last, match.index))));
-        last = TAG_RE.lastIndex;
-        const [, closing, tag, rawAttributes] = match;
-        if (closing) { stack.pop(); continue; }
-        const element = createElement(document, tag);
-        const attributeText = rawAttributes.replace(/\/\s*$/, '');
-        ATTR_RE.lastIndex = 0;
-        let attribute;
-        while ((attribute = ATTR_RE.exec(attributeText)) !== null) {
-            element.setAttribute(attribute[1], attribute[2] === undefined ? '' : decodeEntities(attribute[2]));
-        }
-        push(element);
-        if (!/\/\s*$/.test(rawAttributes) && !VOID_TAGS.has(tag.toLowerCase())) stack.push(element);
-    }
-    if (last < html.length) push(createTextNode(document, decodeEntities(html.slice(last))));
-    return roots;
-}
-
-function installDom() {
-    const listeners = new Map();
-    const document = {
-        nodeType: 9,
-        createElement: (tag) => createElement(document, tag),
-        createTextNode: (text) => createTextNode(document, text),
-        getElementById(id) {
-            return descendants(document.documentElement).find(
-                (node) => node.nodeType === 1 && node.getAttribute('id') === id,
-            ) ?? null;
-        },
-        querySelector(selector) { return document.querySelectorAll(selector)[0] ?? null; },
-        querySelectorAll(selector) { return document.documentElement.querySelectorAll(selector); },
-        addEventListener(type, listener, options) {
-            let bucket = listeners.get(type);
-            if (bucket === undefined) listeners.set(type, bucket = new Set());
-            bucket.add(listener);
-            options?.signal?.addEventListener?.('abort', () => bucket.delete(listener));
-        },
-        removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
-        _fire(event) { for (const listener of [...(listeners.get(event.type) ?? [])]) listener(event); },
-        listenerCount(type) { return listeners.get(type)?.size ?? 0; },
-        clearListeners() { listeners.clear(); },
-    };
-    document.documentElement = createElement(document, 'html');
-    document.body = createElement(document, 'body');
-    document.documentElement.appendChild(document.body);
-
-    const window = { document, __T: DICTIONARY, devicePixelRatio: 1, addEventListener() { }, removeEventListener() { } };
-    globalThis.document = document;
-    globalThis.window = window;
-    return { document, window };
-}
-
-const dom = installDom();
-
-// The modules under test are required *after* the DOM (and the dictionary) exist.
-const { ChartLegend } = require('../src/chart/chart-legend.js');
-const { IndicatorDialog } = require('../src/chart/indicator-dialog.js');
-const {
-    IndicatorSourceKind,
-    IndicatorSourceStatusReason,
-} = require('@stocksharp/indicators');
+// The module under test is required *after* the DOM exists.
+const { ChartLegend, fullscreenMenuLayer } = require('../src/chart/chart-legend.js');
+const { createTranslate } = require('../src/chart/chart-host.js');
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------------------------
+
+// Renderable answers for every string the menu puts in front of the user: a label that reached the
+// menu without going through the host's translator would not read like this.
+const DICTIONARY = {
+    Chart: 'RENDERED-CHART',
+    Candles: 'RENDERED-CANDLES',
+    Line: 'RENDERED-LINE',
+    Renko: 'RENDERED-RENKO',
+};
+
+// The renderings this page's switcher implements. Deliberately not the set the legend used to
+// hardcode: 'renko' is here and 'area' is not, so an entry can only be in the menu because this
+// list put it there.
+const CHART_TYPES = [
+    { value: 'candle', label: 'Candles', icon: 'bi bi-bar-chart-fill' },
+    { value: 'line', label: 'Line', icon: 'bi bi-graph-up' },
+    { value: 'renko', label: 'Renko', icon: 'bi bi-bricks' },
+];
+
+const MENU_SELECTOR = '.chart-legend-floating-ct-menu';
+
+function hostStub() {
+    return {
+        translate: createTranslate(DICTIONARY),
+        formatters: {
+            price: (value) => `P<${value.toFixed(2)}>`,
+            volume: (value) => `V<${value}>`,
+            time: (timeSec) => `T<${timeSec}>`,
+        },
+        notify: () => { },
+    };
+}
 
 function clickEvent(target) {
     return { type: 'click', target, bubbles: true };
@@ -349,63 +83,330 @@ function chartStub() {
     };
 }
 
-/** The slice of the indicator engine the legend talks to (LegendIndicatorEngine). */
-function indicatorEngineStub(values) {
-    return {
-        onChange: null,
-        values,
-        getIndicators() { return this.values.map((value) => ({ id: value.id })); },
-        getValuesAt() { return this.values; },
-        remove() { },
-        // What IndicatorEngine.setOutputStyle does once the style really changed: _emitChange().
-        emitChange() { this.onChange?.(); },
-    };
+/** A layer element the page nominates for floating menus, e.g. its fullscreen element. */
+function makeLayer(id) {
+    const layer = document.createElement('div');
+    layer.setAttribute('id', id);
+    document.body.appendChild(layer);
+    return layer;
 }
 
-function mountLegend(candles) {
-    const host = document.createElement('div');
-    host.setAttribute('id', 'chart-legend');
-    document.body.appendChild(host);
-    const legend = new ChartLegend();
-    legend.init('chart-legend', chartStub());
-    if (candles) legend.setRawCandles(candles);
-    return legend;
+// Legends mounted by a test, disposed before the next one: an instance left holding an open menu
+// would otherwise register its closer during the following test and be counted there.
+const mounted = [];
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
+const floatingMenus = (root) => root.querySelectorAll(MENU_SELECTOR);
+
+/**
+ * The menus standing in `root`, compared by identity. Which menu survived is the whole question in
+ * the two-legend cases, and a structural comparison would call two menus built from the same list
+ * the same menu.
+ */
+function assertMenus(root, expected, message) {
+    const actual = floatingMenus(root);
+    assert.equal(actual.length, expected.length, message);
+    for (let i = 0; i < expected.length; i++) assert.equal(actual[i], expected[i], message);
 }
 
-beforeEach(() => {
+/**
+ * A legend painted into its own element, with a strip to click the toggle in. `layer` is where its
+ * menus are appended; `menuLayer` overrides that with a function for the tests that watch which
+ * layer is asked, and when.
+ */
+function mountLegend(options = {}) {
+    const container = document.createElement('div');
+    container.className = 'chart-legend';
+    document.body.appendChild(container);
+
+    const layer = options.layer ?? document.body;
+    const legend = new ChartLegend({
+        container,
+        host: hostStub(),
+        // No indicator engine is ever set in this file, so no sub-pane is ever asked for.
+        paneHost: { getValuesElement: () => null },
+        chartTypes: options.chartTypes ?? CHART_TYPES,
+        menuLayer: options.menuLayer ?? (() => layer),
+    });
+    legend.init(chartStub());
+    legend.setRawCandles([bar(1700000000, 100)]);
+    legend.refresh();
+    mounted.push(legend);
+    return { legend, container, layer };
+}
+
+/** Clicks the toggle in the strip and hands back the menu that appeared in `layer`. */
+function openMenu(mount, layer = mount.layer) {
+    const toggle = mount.container.querySelector('.legend-ct-toggle');
+    assert.ok(toggle, 'the OHLCV strip must carry the chart-type toggle');
+    toggle.dispatchEvent(clickEvent(toggle));
+
+    const menus = floatingMenus(layer);
+    const menu = menus[menus.length - 1] ?? null;
+    assert.ok(menu, 'clicking the toggle opens the floating menu in the layer the page nominated');
+    return menu;
+}
+
+function itemFor(menu, type) {
+    const item = menu.querySelector(`.legend-ct-item[data-type="${type}"]`);
+    assert.ok(item, `the menu offers a "${type}" item`);
+    return item;
+}
+
+beforeEach(async () => {
+    // Drain the timer an open menu schedules its closer from, so a menu left open by the previous
+    // test cannot register one after the sweep below.
+    await tick();
+    for (const legend of mounted.splice(0)) legend.dispose();
     document.body.childNodes = [];
     dom.document.clearListeners();
+    delete dom.document.fullscreenElement;
+    delete dom.document.webkitFullscreenElement;
 });
 
 // ---------------------------------------------------------------------------------------------
 
-describe('floating chart-type menu releases its document closer', () => {
+describe('floating chart-type menu', () => {
+    it('opens in the layer the page nominates, hanging below its toggle', () => {
+        const layer = makeLayer('fullscreen-layer');
+        const mount = mountLegend({ layer });
+
+        const menu = openMenu(mount);
+        assert.equal(menu.parentElement, layer, 'the menu belongs to the nominated layer');
+        assert.ok(menu.classList.contains('chart-legend-floating-ct-menu'),
+            'the menu keeps the class the page styles it by');
+        // Only the layer is a direct child of the body here: a menu appended to the body itself
+        // would be painted nowhere at all while the layer is a fullscreen element.
+        assert.deepEqual(
+            document.body.children.filter((child) => child.matches(MENU_SELECTOR)), [],
+            'nothing is appended straight to the document body any more',
+        );
+
+        const toggle = mount.container.querySelector('.legend-ct-toggle');
+        const top = Number(/top:(-?[\d.]+)px/.exec(menu.style.cssText)?.[1]);
+        assert.equal(menu.style.cssText.includes('position:fixed'), true,
+            'the menu is positioned against the viewport, not against whatever the layer scrolls');
+        assert.ok(top >= toggle.getBoundingClientRect().bottom,
+            'the menu hangs below the toggle it was opened from');
+    });
+
+    it('asks for the layer again on every open', async () => {
+        const layers = [makeLayer('layer-before'), makeLayer('layer-after')];
+        let opens = 0;
+        // A page that entered fullscreen between the two opens answers with a different element the
+        // second time; a layer read once at construction would strand the menu in the old one.
+        const mount = mountLegend({ menuLayer: () => layers[Math.min(opens++, layers.length - 1)] });
+
+        openMenu(mount, layers[0]);
+        assert.equal(floatingMenus(layers[0]).length, 1, 'the first menu opens in the first layer');
+        await tick();
+
+        openMenu(mount, layers[1]);
+        assert.equal(opens, 2, 'the layer is asked once per open');
+        assert.equal(floatingMenus(layers[0]).length, 0,
+            'reopening takes the previous menu out of the layer it was in');
+        assert.equal(floatingMenus(layers[1]).length, 1, 'the second menu opens in the second layer');
+    });
+
+    it('offers exactly the chart types the page passed, worded by the host', () => {
+        const mount = mountLegend();
+        const menu = openMenu(mount);
+
+        const items = menu.querySelectorAll('.legend-ct-item');
+        assert.deepEqual(items.map((item) => item.dataset.type), ['candle', 'line', 'renko'],
+            'every entry comes from the chartTypes option, in the order the page listed them');
+        assert.deepEqual(items.map((item) => item.textContent.trim()),
+            ['RENDERED-CANDLES', 'RENDERED-LINE', 'RENDERED-RENKO'],
+            'each label is worded through the host translator');
+        assert.deepEqual(items.map((item) => item.querySelector('i').className),
+            CHART_TYPES.map((type) => type.icon), 'each entry wears the icon the page gave it');
+        assert.equal(menu.querySelector('.legend-ct-item[data-type="area"]'), null,
+            'a rendering this page never listed is not offered: the list is no longer the legend\'s');
+    });
+
+    it('offers only what a shorter list holds', () => {
+        // A page whose switcher implements one rendering gets a one-entry menu rather than entries
+        // that do nothing when picked.
+        const mount = mountLegend({ chartTypes: [CHART_TYPES[1]] });
+        const menu = openMenu(mount);
+
+        assert.deepEqual(menu.querySelectorAll('.legend-ct-item').map((item) => item.dataset.type),
+            ['line'], 'the menu is as short as the page\'s list');
+    });
+
     it('removes the outside-click closer when an item is chosen', async () => {
-        const legend = mountLegend([bar(1700000000, 100)]);
-        legend.refresh();
-
-        const toggle = legend._el.querySelector('.legend-ct-toggle');
-        assert.ok(toggle, 'the OHLCV strip must carry the chart-type toggle');
-        toggle.dispatchEvent(clickEvent(toggle));
-
-        const menu = document.querySelector('.chart-legend-floating-ct-menu');
-        assert.ok(menu, 'clicking the toggle opens the floating menu in document.body');
+        const mount = mountLegend();
+        const menu = openMenu(mount);
 
         // The closer is registered from a setTimeout(0) so the opening click cannot trip it.
-        await new Promise((resolve) => setTimeout(resolve, 5));
+        await tick();
         assert.equal(dom.document.listenerCount('click'), 1, 'the outside-click closer is registered');
 
-        const item = menu.querySelector('.legend-ct-item[data-type="line"]');
-        assert.ok(item, 'the menu offers a line item');
+        const item = itemFor(menu, 'line');
         item.dispatchEvent(clickEvent(item));
 
-        assert.equal(document.querySelector('.chart-legend-floating-ct-menu'), null,
+        assert.equal(floatingMenus(mount.layer).length, 0,
             'choosing an item removes the menu from the document');
         assert.equal(
             dom.document.listenerCount('click'), 0,
-            'choosing an item must also unregister the document closer: the item path calls '
-            + 'menu.remove() only, and the closer that does bubble sees menu.contains(target) === '
-            + 'true over the detached subtree, so it never removes itself or releases the menu',
+            'choosing an item must also unregister the document closer: a path that calls '
+            + 'menu.remove() only leaves a closer that does bubble but sees menu.contains(target) '
+            + '=== true over the detached subtree, so it never removes itself or releases the menu',
         );
+    });
+
+    it('reports the chosen type once and repaints the toggle', () => {
+        const mount = mountLegend();
+        const chosen = [];
+        mount.legend.onChartTypeChange = (type) => chosen.push(type);
+
+        const item = itemFor(openMenu(mount), 'renko');
+        item.dispatchEvent(clickEvent(item));
+
+        assert.deepEqual(chosen, ['renko'], 'the page hears the chosen value exactly once');
+        const toggle = mount.container.querySelector('.legend-ct-toggle');
+        assert.equal(toggle.dataset.current, 'renko', 'the toggle reports the rendering now on screen');
+        assert.equal(toggle.querySelector('[data-ct-icon]').className, 'bi bi-bricks',
+            'and wears that entry\'s icon, which only the chartTypes option knows');
+    });
+
+    it('closes on a click outside and releases its closer', async () => {
+        const mount = mountLegend();
+        openMenu(mount);
+        await tick();
+
+        const elsewhere = document.createElement('div');
+        document.body.appendChild(elsewhere);
+        elsewhere.dispatchEvent(clickEvent(elsewhere));
+
+        assert.equal(floatingMenus(mount.layer).length, 0, 'a click outside takes the menu down');
+        assert.equal(dom.document.listenerCount('click'), 0,
+            'and the closer goes with it rather than waiting for the next click');
+    });
+
+    it('keeps one menu and one closer when the toggle is clicked twice', async () => {
+        const mount = mountLegend();
+        openMenu(mount);
+        await tick();
+        openMenu(mount);
+
+        assert.equal(floatingMenus(mount.layer).length, 1,
+            'reopening replaces this instance\'s menu instead of stacking a second one');
+        assert.equal(dom.document.listenerCount('click'), 0,
+            'the first closer is released as the first menu goes');
+        await tick();
+        assert.equal(dom.document.listenerCount('click'), 1, 'and the reopened menu registers one closer');
+    });
+
+    it('registers no closer for a menu that is already gone', async () => {
+        const mount = mountLegend();
+        openMenu(mount);
+        // Disposed within the same tick the menu was opened in, i.e. before the closer's timer runs.
+        mount.legend.dispose();
+
+        assert.equal(floatingMenus(mount.layer).length, 0, 'dispose takes an open menu down with it');
+        await tick();
+        assert.equal(dom.document.listenerCount('click'), 0,
+            'and the pending timer must not hand the document a closer for a menu nobody can see');
+    });
+});
+
+describe('two legends on one page', () => {
+    it('leaves the other legend\'s menu standing when one opens its own', async () => {
+        const first = mountLegend();
+        const second = mountLegend();
+
+        const firstMenu = openMenu(first);
+        await tick();
+        const secondMenu = openMenu(second);
+        await tick();
+
+        assert.notEqual(firstMenu, secondMenu, 'each legend built its own menu');
+        assertMenus(document.body, [firstMenu, secondMenu],
+            'opening the second menu must not sweep the first one out of the document: the two '
+            + 'legends share a layer, and only one of them owns each menu in it');
+        assert.equal(dom.document.listenerCount('click'), 2, 'one closer per open menu, not one per page');
+    });
+
+    it('closes only the menu whose item was chosen', async () => {
+        const first = mountLegend();
+        const second = mountLegend();
+
+        // Both opened inside one tick, so neither closer is registered yet: what disappears below
+        // is what the item path itself takes down, not what an outside click legitimately closes.
+        const firstMenu = openMenu(first);
+        const secondMenu = openMenu(second);
+        const item = itemFor(secondMenu, 'line');
+        item.dispatchEvent(clickEvent(item));
+
+        assertMenus(document.body, [firstMenu],
+            'the first legend\'s menu survives a choice made in the second\'s');
+        assert.equal(second.container.querySelector('.legend-ct-toggle').dataset.current, 'line',
+            'the choice reaches the legend it was made in');
+        assert.equal(first.container.querySelector('.legend-ct-toggle').dataset.current, 'candle',
+            'and leaves the other legend on the rendering it was already showing');
+
+        await tick();
+        assert.equal(dom.document.listenerCount('click'), 1,
+            'only the still-open menu ends up with a closer');
+    });
+
+    it('gives each closer only its own menu to answer for', async () => {
+        const first = mountLegend();
+        const second = mountLegend();
+
+        const firstMenu = openMenu(first);
+        await tick();
+        const secondMenu = openMenu(second);
+        await tick();
+        assert.equal(dom.document.listenerCount('click'), 2, 'both closers are registered');
+
+        // A click inside the first menu, on the menu itself rather than an entry: outside the
+        // second menu, so the second closes, while the first stays open under the cursor.
+        firstMenu.dispatchEvent(clickEvent(firstMenu));
+
+        assertMenus(document.body, [firstMenu],
+            'a closer answers for its own menu only — a document-wide sweep would take both down');
+        assert.equal(secondMenu.parentElement, null, 'the second menu is out of the document');
+        assert.equal(dom.document.listenerCount('click'), 1,
+            'and only the closed menu\'s closer was released');
+    });
+});
+
+// `fullscreenMenuLayer` is what src/chart/app.ts and the published ui entry point hand every
+// legend, so it is the layer nearly every consumer actually gets.
+describe('fullscreenMenuLayer', () => {
+    it('answers with the document body while nothing is fullscreen', () => {
+        assert.equal(fullscreenMenuLayer(), document.body);
+    });
+
+    it('answers with the fullscreen element while one is up', () => {
+        const tile = makeLayer('chart-tile');
+        dom.document.fullscreenElement = tile;
+        assert.equal(fullscreenMenuLayer(), tile);
+    });
+
+    it('reads the webkit-prefixed property too', () => {
+        const tile = makeLayer('chart-tile');
+        dom.document.webkitFullscreenElement = tile;
+        assert.equal(fullscreenMenuLayer(), tile,
+            'Safari names it webkitFullscreenElement, and a chart tile there is fullscreen all the same');
+    });
+
+    it('puts the menu inside the fullscreen tile, and back in the body on leaving it', async () => {
+        const tile = makeLayer('chart-tile');
+        const mount = mountLegend({ menuLayer: fullscreenMenuLayer });
+
+        dom.document.fullscreenElement = tile;
+        const inTile = openMenu(mount, tile);
+        assert.equal(inTile.parentElement, tile,
+            'nothing outside the fullscreen element is painted, so a menu in the body is a menu '
+            + 'the user cannot see');
+        await tick();
+
+        delete dom.document.fullscreenElement;
+        const inBody = openMenu(mount, document.body);
+        assert.equal(inBody.parentElement, document.body, 'and it follows the page back out again');
+        assert.equal(floatingMenus(tile).length, 0, 'the menu that was in the tile went with the reopen');
     });
 });

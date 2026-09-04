@@ -70,6 +70,11 @@
         r.setProperty('--t-accent', pal.accent);
         r.setProperty('--t-up', pal.up);
         r.setProperty('--t-down', pal.down);
+        // The names the chart UI layer reads. This page calls them up/down; the workspace palette
+        // the layer was written against calls them green/red, and a colour under a name nobody
+        // sets falls back to a dark default that a light page then wears.
+        r.setProperty('--t-green', pal.up);
+        r.setProperty('--t-red', pal.down);
     }
 
     var r2 = function (v) { return Math.round(v * 100) / 100; };
@@ -300,6 +305,7 @@
         if (intent.price !== undefined && intent.changes === undefined) bits.push('@ ' + intent.price);
         return bits.length ? ' ' + bits.join(' ') : '';
     }
+
 
     // ---- tiny DOM helpers ---------------------------------------------------
     function el(id) { return document.getElementById(id); }

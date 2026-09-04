@@ -63,21 +63,40 @@ module.exports = indicators;
     },
 };
 
-// IIFE globals: the engine (unpkg/jsdelivr + demo) and the terminal demo app.
+// IIFE globals: the engine (unpkg/jsdelivr + demo), the UI layer that sits on it, and the demo app
+// that wires the two together.
+//
+// The UI layer is a bundle of its own rather than part of sschart.js because a page can want the
+// engine without it - a sparkline, a report, a chart with no menus - and the engine is what those
+// pages are already paying for.
 const targets = [
     { entryPoints: [join(here, 'src', 'index.ts')], outfile: join(dist, 'sschart.js'), globalName: 'SSChart' },
+    { entryPoints: [join(here, 'src', 'chart', 'ui.ts')], outfile: join(dist, 'sschartui.js'), globalName: 'SSChartUI', uiLayer: true },
     { entryPoints: [join(here, 'src', 'chart', 'app.ts')], outfile: join(dist, 'chart-app.js') },
 ];
 
+// The UI bundle sits on the engine rather than containing it: `./engine.js` resolves to the copy
+// that reads the `SSChart` global. Two copies would not merely be wasteful - a chart matches a
+// series definition by identity, so a definition from a second copy is one the chart does not know.
+const engineOffTheGlobal = {
+    name: 'engine-off-the-global',
+    setup(build) {
+        build.onResolve({ filter: /^\.\/engine\.js$/ }, () => ({
+            path: join(here, 'src', 'chart', 'engine.global.ts'),
+        }));
+    },
+};
+
 for (const t of targets) {
+    const { uiLayer, ...options } = t;
     await build({
-        ...t,
+        ...options,
         bundle: true,
         format: 'iife',
         sourcemap: true,
         target: 'es2020',
         logLevel: 'info',
-        plugins: [externalIndicators],
+        plugins: uiLayer === true ? [externalIndicators, engineOffTheGlobal] : [externalIndicators],
     });
     console.log('built ' + t.outfile);
 }
@@ -117,7 +136,7 @@ if (shipped < MIN_INDICATOR_REGISTRATIONS) {
         + 'away — check the indicator package "sideEffects" field.');
 }
 
-for (const name of ['sschart.js', 'chart-app.js']) {
+for (const name of ['sschart.js', 'sschartui.js', 'chart-app.js']) {
     const file = join(dist, name);
     const inlined = countRegistrations(file);
     if (inlined > 0) {

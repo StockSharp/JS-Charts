@@ -17,12 +17,12 @@
     var candleHistory = Demo.genCandles(2500, { startPrice: 100, step: 3600, seed: 555 });
     var footprintHistory = Demo.genExactBars(2500, { tickSize: TICK, step: 3600, seed: 555 });
 
-    var controller = null, priceSeries = null, smaSeries = null, mode = 'candles';
+    var controller = null, priceSeries = null, mode = 'candles';
 
     function teardown() {
         if (controller) { controller.dispose(); controller = null; }
-        [priceSeries, smaSeries].forEach(function (s) { if (s) { try { chart.removeSeries(s); } catch (e) { /* gone */ } } });
-        priceSeries = null; smaSeries = null;
+        if (priceSeries) { try { chart.removeSeries(priceSeries); } catch (e) { /* gone */ } }
+        priceSeries = null;
     }
 
     function build(next) {
@@ -42,10 +42,6 @@
                 bidColor: pal.bid, askColor: pal.ask,
             });
         }
-        smaSeries = chart.addSeries(SSChart.LineSeries, {
-            color: pal.accent, lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
-        });
-
         controller = new SSChart.ChartDataController({
             chart: chart, series: priceSeries,
             dataSource: Demo.makeArrayFeed(all, { latencyMs: 400 }),
@@ -65,21 +61,13 @@
     function onSnapshot(snap) {
         if (snap.status === 'ready' && snap.loadedBars !== lastLoaded) {
             lastLoaded = snap.loadedBars;
-            recomputeSma();
+            // Indicators recompute over the whole loaded window, so an older page arriving at the
+            // left extends them backwards rather than leaving a study that starts mid-chart. The
+            // SMA this page opens with is one of them, which is why it appears in the legend and
+            // can be edited and removed like any other.
+            ui.setCandles(controller.rawData());
         }
         renderStatus(snap);
-    }
-
-    // SMA over the close of every loaded bar (candles and footprint both carry close).
-    function recomputeSma() {
-        var raw = controller.rawData();
-        var out = [], sum = 0;
-        for (var i = 0; i < raw.length; i++) {
-            sum += raw[i].close;
-            if (i >= SMA_PERIOD) sum -= raw[i - SMA_PERIOD].close;
-            if (i >= SMA_PERIOD - 1) out.push({ time: raw[i].time, value: Demo.r2(sum / SMA_PERIOD) });
-        }
-        smaSeries.setData(out);
     }
 
     function renderStatus(snap) {
@@ -103,8 +91,42 @@
         build(btn.getAttribute('data-mode'));
     });
 
-    Demo.el('olderBtn').addEventListener('click', function () {
+    function loadOlder() {
         if (controller) controller.loadMoreBefore();
+    }
+
+    Demo.el('olderBtn').addEventListener('click', loadOlder);
+
+    // ---- right-click menu ----------------------------------------------------
+    //
+    // This page is about pulling older history, so that goes first; the indicator rows come from
+    // the shared stack below it. Every row comes from here - the menu module contributes none of
+    // its own, which is what lets it sit on a page with no broker behind it.
+    var ui = SSChartUI.createChartUi(chart, {
+        container: Demo.el('chart'),
+        host: SSChartUI.standaloneHost,
+        priceSource: null,
+        chartTypes: [],
+        storage: SSChartUI.localChartUiStorage('sschart:demo:backfill'),
+        provideItems: function () {
+            var snap = controller ? controller.snapshot() : null;
+            return [
+                [{
+                    key: 'older',
+                    label: 'Load older history',
+                    icon: 'bi bi-arrow-bar-left',
+                    // Greyed out rather than hidden once the feed is exhausted or a load is in
+                    // flight, so the row keeps its place and says why it cannot act.
+                    disabled: snap === null || !snap.hasMoreBefore || snap.loadingHistory,
+                    invoke: loadOlder,
+                }, {
+                    key: 'fit',
+                    label: 'Fit loaded range',
+                    icon: 'bi bi-arrows-collapse-vertical',
+                    invoke: function () { chart.timeScale().fitContent(); },
+                }],
+            ];
+        },
     });
 
     var dark = true;
@@ -120,4 +142,7 @@
     });
 
     build('candles');
+    // The overlay the page is about, added the way a reader would add it: through the engine, so it
+    // is in the legend with its value under the cursor rather than being a line nothing names.
+    ui.engine.add('SimpleMovingAverage', { length: SMA_PERIOD }, '__main__');
 })();

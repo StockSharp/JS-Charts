@@ -44,6 +44,11 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js"
     },
+    "./ui": {
+      "types": "./dist/types/chart/ui.d.ts",
+      "import": "./dist/esm/chart/ui.js"
+    },
+    "./ui.css": "./styles/chart-ui.css",
     "./indicators": {
       "types": "./dist/types/chart/indicators/index.d.ts",
       "import": "./dist/esm/chart/indicators/index.js"
@@ -84,12 +89,15 @@
     "dist/types",
     "dist/sschart.js",
     "dist/sschart.js.map",
+    "dist/sschartui.js",
+    "dist/sschartui.js.map",
     "src",
     "LICENSE",
     "NOTICE",
     "README.md",
     "sample.png",
-    "screenshots"
+    "screenshots",
+    "styles"
   ],
   "publishConfig": {
     "access": "public",

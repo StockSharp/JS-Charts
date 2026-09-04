@@ -69,14 +69,57 @@
 
     // ---- mode segmented control --------------------------------------------
     var seg = Demo.el('modeSeg');
+
+    // One place that switches the rendering, so the buttons and the right-click menu cannot
+    // disagree about which one is active.
+    function selectMode(mode) {
+        Array.prototype.forEach.call(seg.querySelectorAll('.tbtn'), function (b) {
+            b.classList.toggle('on', b.getAttribute('data-mode') === mode);
+        });
+        build(mode);
+        // Each rendering has its own bars, so a study follows whatever is on screen: an EMA over
+        // the footprint's ticks is not the same series as one over the TPO's sessions.
+        ui.setCandles(mode === 'tpo' ? tpoBars : exactBars);
+    }
+
     seg.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-mode]');
         if (!btn) return;
-        Array.prototype.forEach.call(seg.querySelectorAll('.tbtn'), function (b) { b.classList.remove('on'); });
-        btn.classList.add('on');
-        build(btn.getAttribute('data-mode'));
+        selectMode(btn.getAttribute('data-mode'));
     });
-    build('footprint');
+    // ---- right-click menu ----------------------------------------------------
+    //
+    // The same three renderings the segmented control offers, one right-click away. Every row is
+    // the page's: the menu module contributes none of its own, which is what lets it sit on a
+    // page that has no indicators at all.
+    var MODES = [
+        ['footprint', 'Footprint', 'bi bi-grid-3x3-gap'],
+        ['profile', 'Volume profile', 'bi bi-bar-chart-steps'],
+        ['tpo', 'TPO', 'bi bi-fonts'],
+    ];
+    var ui = SSChartUI.createChartUi(chart, {
+        container: Demo.el('chart'),
+        host: SSChartUI.standaloneHost,
+        priceSource: null,
+        chartTypes: [],
+        storage: SSChartUI.localChartUiStorage('sschart:demo:orderflow'),
+        provideItems: function () {
+            var active = seg.querySelector('.on').getAttribute('data-mode');
+            return [MODES.map(function (entry) {
+                return {
+                    key: entry[0],
+                    label: entry[1],
+                    icon: entry[2],
+                    // The rendering already on screen stays listed and unclickable, so the menu
+                    // says which one is current instead of hiding it.
+                    disabled: entry[0] === active,
+                    invoke: function () { selectMode(entry[0]); },
+                };
+            })];
+        },
+    });
+
+    selectMode('footprint');
 
     // ---- theme --------------------------------------------------------------
     var dark = true;

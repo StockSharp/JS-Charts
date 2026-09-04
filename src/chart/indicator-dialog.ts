@@ -1,5 +1,10 @@
-import { T } from './i18n.js';
-import { TerminalUtils } from './utils.js';
+// Indicator picker and editor: the searchable catalog on the left, the full per-indicator editor
+// on the right, the live list of what is already on the chart underneath it.
+//
+// Everything the module needs from the page arrives through IndicatorDialogOptions - the host
+// services, the controller that shows and hides it, the engine it adds to, the workspace
+// controllers it edits through. Nothing is read off `window`, and the module owns no modal
+// behaviour of its own: no backdrop, no scroll lock, no Escape key.
 import { IndicatorSettings } from './indicators/indicator-settings.js';
 import { humanize } from '@stocksharp/indicators';
 import {
@@ -9,22 +14,32 @@ import {
     type IndicatorOutputStylePatch,
     type IndicatorSource,
 } from '@stocksharp/indicators';
+import type { ChartUiHost, ModalController, Translate } from './chart-host.js';
 import type {
     IndicatorController,
     IndicatorControllerSnapshot,
     IndicatorUpdatePatch,
 } from '../workspace/indicator-controller.js';
-import {
-    IndicatorCatalogController,
-    type IndicatorCatalogListener,
-    type IndicatorFavoritesStorage,
+import { IndicatorCatalogController } from './engine.js';
+import type {
+    IndicatorCatalogEntry,
+    IndicatorCatalogListener,
+    IndicatorFavoritesStorage,
 } from '../workspace/indicator-catalog-controller.js';
-import {
+import type {
     IndicatorTemplateController,
-    type IndicatorTemplateListener,
+    IndicatorTemplateListener,
 } from '../workspace/templates.js';
 
 const FAVORITES_GROUP = '__favorites__';
+
+const FAVORITE_ON = '★';
+const FAVORITE_OFF = '☆';
+
+// The search box is focused after the host's modal has finished appearing: a modal that fades in
+// moves focus itself as it settles, and focusing into the middle of that transition loses the
+// caret again. Long enough to outlast Bootstrap's fade, short enough to feel immediate.
+const FOCUS_DELAY_MS = 200;
 
 const CANDLE_FIELDS = [
     [IndicatorCandleField.Open, 'Open'],
@@ -45,190 +60,275 @@ const LINE_STYLES = [
     [4, 'Sparse dotted'],
 ] as const;
 
-/** Trading-workspace indicator picker and complete editor over IndicatorController. */
+/** One live indicator, as the engine reports it. */
+export interface IndicatorDialogEngineEntry {
+    /** Runtime id. This is what `remove` takes and what a legend button carries. */
+    readonly id: string | number;
+
+    /** Stable layout id. This is what the workspace controller keys on. */
+    readonly persistenceId: string;
+}
+
+/**
+ * The engine operations the dialog drives directly.
+ *
+ * Everything else it does to an indicator - parameters, source, placement, output styling - goes
+ * through IndicatorController so it lands on the command stack and can be undone. Only creation
+ * and destruction have no controller equivalent, so only those are named here.
+ */
+export interface IndicatorDialogEngine {
+    /** Creates an indicator of `type` in `targetPaneId`; null when the engine refused. */
+    add(
+        type: string,
+        parameters: Readonly<Record<string, IndicatorParameterValue>>,
+        targetPaneId: string,
+    ): IndicatorDialogEngineEntry | null;
+
+    /** Destroys the indicator with this runtime id. */
+    remove(id: string | number): void;
+
+    /** Everything currently on the chart. */
+    getIndicators(): readonly IndicatorDialogEngineEntry[];
+}
+
+/** One pane of the chart, as the placement selectors read it. */
+export interface IndicatorDialogPane {
+    id(): string;
+    priceScaleIds(): readonly string[];
+}
+
+/** The chart, narrowed to what the placement selectors need to list. */
+export interface IndicatorDialogChart {
+    panes(): readonly IndicatorDialogPane[];
+}
+
+/** Everything the dialog needs to run. */
+export interface IndicatorDialogOptions {
+    /** The dialog's markup. Queried once, and never created by this module. */
+    readonly root: HTMLElement;
+
+    /** Shows and hides `root`. The page owns backdrop, scroll lock, focus trap and Escape. */
+    readonly modal: ModalController;
+
+    readonly host: ChartUiHost;
+    readonly engine: IndicatorDialogEngine;
+    readonly controller: IndicatorController;
+    readonly catalog: IndicatorCatalogController;
+    readonly templates: IndicatorTemplateController;
+    readonly chart: IndicatorDialogChart;
+}
+
+/** One catalog row, kept alive for the life of the dialog so filtering never rebuilds it. */
+interface IndicatorListRow {
+    readonly id: string;
+    readonly element: HTMLElement;
+    readonly favorite: HTMLElement;
+    /** Lower-cased `name fullName translatedFullName`, matched as a plain substring. */
+    readonly searchKey: string;
+}
+
 /**
  * Wording for an unavailable source.
  *
- * The key used to be built by interpolation, so nothing in a dictionary could ever match it: the
- * warning stayed untranslated and even English readers saw the raw enum slug ('missing-indicator').
- * One fixed key per reason, with the slug only as a last-resort argument to a positional key --
- * the form this file already uses elsewhere ('Add {0}').
+ * One fixed key per reason, with the raw slug reaching the reader only through the argument of a
+ * positional key -- the form this file uses elsewhere ('Add {0}'). A key with the reason
+ * interpolated into it is a key no dictionary can hold, so the warning would stay in English.
  */
-function sourceUnavailableText(reason: IndicatorSourceStatusReason): string {
+function sourceUnavailableText(
+    translate: Translate,
+    reason: IndicatorSourceStatusReason,
+): string {
     switch (reason) {
         case IndicatorSourceStatusReason.MissingIndicator:
-            return T.t('Source unavailable: the indicator it reads no longer exists');
+            return translate('Source unavailable: the indicator it reads no longer exists');
         case IndicatorSourceStatusReason.MissingOutput:
-            return T.t('Source unavailable: the output it reads no longer exists');
+            return translate('Source unavailable: the output it reads no longer exists');
         case IndicatorSourceStatusReason.UpstreamUnavailable:
-            return T.t('Source unavailable: an indicator it depends on is unavailable');
+            return translate('Source unavailable: an indicator it depends on is unavailable');
         case IndicatorSourceStatusReason.Error:
-            return T.t('Source unavailable: it could not be evaluated');
+            return translate('Source unavailable: it could not be evaluated');
         default:
-            return T.t('Source unavailable: {0}', reason);
+            return translate('Source unavailable: {0}', reason);
     }
 }
 
+/** Trading-workspace indicator picker and complete editor over IndicatorController. */
 export class IndicatorDialog {
-    private modalEl: HTMLElement | null = null;
-    private indicatorEngine: any = null;
-    private controller: IndicatorController | null = null;
-    private catalog: IndicatorCatalogController | null = null;
-    private templates: IndicatorTemplateController | null = null;
-    private chart: any = null;
-    private searchInput: HTMLInputElement | null = null;
-    private listEl: HTMLElement | null = null;
-    private settingsEl: HTMLElement | null = null;
-    private activeListEl: HTMLElement | null = null;
-    private selectedType: string | null = null;
+    private readonly root: HTMLElement;
+    private readonly modal: ModalController;
+    private readonly host: ChartUiHost;
+    private readonly engine: IndicatorDialogEngine;
+    private readonly controller: IndicatorController;
+    private readonly catalog: IndicatorCatalogController;
+    private readonly templates: IndicatorTemplateController;
+    private readonly chart: IndicatorDialogChart;
+    private readonly searchInput: HTMLInputElement;
+    private readonly listEl: HTMLElement;
+    private readonly emptyEl: HTMLElement;
+    private readonly tabsEl: HTMLElement;
+    private readonly settingsEl: HTMLElement;
+    private readonly activeListEl: HTMLElement;
+    private readonly events = new AbortController();
+    private rows: readonly IndicatorListRow[] = [];
     private targetPaneId: string | null = null;
     private editingId: string | null = null;
     private editingSnapshot: IndicatorControllerSnapshot | null = null;
+    /** Where the dialog came from, while it sits inside a fullscreen element instead. */
+    private restoreParent: HTMLElement | null = null;
     private shown = false;
-    private events: AbortController | null = null;
+    private disposed = false;
+
+    private readonly translate: Translate = (key, ...args) => this.host.translate(key, ...args);
 
     private readonly handleControllerChange = (): void => {
-        if (!this.shown) return;
+        if (this.disposed || !this.shown) return;
         this.renderActiveList();
     };
     private readonly handleCatalogChange: IndicatorCatalogListener = (): void => {
-        if (!this.shown) return;
-        this.renderList();
+        if (this.disposed) return;
+        this.syncFavorites();
     };
     private readonly handleTemplateChange: IndicatorTemplateListener = (): void => {
-        if (!this.shown || !this.editingSnapshot) return;
+        if (this.disposed || !this.shown || this.editingSnapshot === null) return;
         this.refreshTemplateSelect(this.editingSnapshot.type);
     };
+    private readonly handleClosed = (): void => {
+        this.shown = false;
+        this.restoreFromFullscreen();
+    };
 
-    init(
-        modalId: string,
-        indicatorEngine: any,
-        controller: IndicatorController,
-        chart: any,
-        catalog?: IndicatorCatalogController,
-        templates?: IndicatorTemplateController,
-    ): void {
-        this.dispose();
-        this.modalEl = document.getElementById(modalId);
-        this.indicatorEngine = indicatorEngine;
-        this.controller = controller;
-        this.catalog = catalog ?? createIndicatorCatalogController();
-        this.templates = templates ?? new IndicatorTemplateController({ indicators: controller });
-        this.chart = chart;
-        if (!this.modalEl) return;
-        if (!controller || typeof controller.indicators !== 'function'
-            || typeof controller.update !== 'function') {
-            throw new TypeError('sschart: indicator dialog controller is invalid');
-        }
-        this.searchInput = this.modalEl.querySelector('.indicator-search-input');
-        this.listEl = this.modalEl.querySelector('.indicator-list');
-        this.settingsEl = this.modalEl.querySelector('.indicator-settings');
-        this.activeListEl = this.modalEl.querySelector('.active-indicators-list');
-        this.renderCategoryTabs();
-        this.events = new AbortController();
+    constructor(options: IndicatorDialogOptions) {
+        if (options === null || typeof options !== 'object')
+            throw new TypeError('sschart: indicator dialog options are required');
+
+        this.root = requireMethods(options.root, 'root element', ['querySelector', 'querySelectorAll']);
+        this.modal = requireMethods(options.modal, 'modal controller', ['open', 'close', 'onClosed']);
+        this.host = requireMethods(options.host, 'host', ['translate', 'notify']);
+        this.engine = requireMethods(options.engine, 'engine', ['add', 'remove', 'getIndicators']);
+        this.controller = requireMethods(options.controller, 'controller', [
+            'indicators', 'get', 'update', 'setVisible', 'subscribe', 'unsubscribe',
+        ]);
+        this.catalog = requireMethods(options.catalog, 'catalog', [
+            'entries', 'search', 'isFavorite', 'toggleFavorite', 'subscribe', 'unsubscribe',
+        ]);
+        this.templates = requireMethods(options.templates, 'templates', [
+            'templates', 'create', 'replace', 'apply', 'remove', 'subscribe', 'unsubscribe',
+        ]);
+        this.chart = requireMethods(options.chart, 'chart', ['panes']);
+        this.searchInput = requireElement(this.root, '.indicator-search-input');
+        this.listEl = requireElement(this.root, '.indicator-list');
+        this.tabsEl = requireElement(this.root, '.indicator-category-tabs');
+        this.settingsEl = requireElement(this.root, '.indicator-settings');
+        this.activeListEl = requireElement(this.root, '.active-indicators-list');
+
         const signal = this.events.signal;
+        this.renderCategoryTabs();
+        this.buildList();
+        this.emptyEl = requireElement(this.listEl, '.indicator-list-empty');
+        this.applyFilter();
 
-        this.modalEl.addEventListener('mousedown', (event) => {
-            if (event.target === this.modalEl) this.hide();
-        }, { signal });
-        this.modalEl.querySelectorAll('[data-close-modal]').forEach(button => (
+        this.root.querySelectorAll('[data-close-modal]').forEach(button => (
             button.addEventListener('click', () => this.hide(), { signal })
         ));
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && this.shown) this.hide();
-        }, { signal });
-        this.searchInput?.addEventListener('input', () => this.filterList(), { signal });
-        this.modalEl.querySelectorAll('.indicator-category-tab').forEach(tab => {
+        this.searchInput.addEventListener('input', () => this.applyFilter(), { signal });
+        this.tabsEl.querySelectorAll('.indicator-category-tab').forEach(tab => {
             tab.addEventListener('click', () => {
-                this.modalEl!.querySelectorAll('.indicator-category-tab')
+                this.tabsEl.querySelectorAll('.indicator-category-tab')
                     .forEach(item => item.classList.remove('active'));
                 tab.classList.add('active');
-                this.filterList();
+                this.applyFilter();
             }, { signal });
         });
+        this.modal.onClosed(this.handleClosed);
         this.controller.subscribe(this.handleControllerChange);
         this.catalog.subscribe(this.handleCatalogChange);
         this.templates.subscribe(this.handleTemplateChange);
-        this.renderList();
     }
 
+    /** Opens the picker with nothing selected. */
     show(): void {
-        if (!this.modalEl) return;
         this.renderActiveList();
-        this.selectedType = null;
         this.targetPaneId = null;
         this.editingId = null;
         this.editingSnapshot = null;
-        if (this.settingsEl) {
-            this.settingsEl.innerHTML = `<div class="indicator-editor-empty">${html(
-                T.t('Select an indicator from the list'),
-            )}</div>`;
-        }
-        if (this.searchInput) this.searchInput.value = '';
-        this.modalEl.querySelectorAll('.indicator-category-tab').forEach(tab => (
-            tab.classList.toggle('active', (tab as HTMLElement).dataset.group === 'All')
-        ));
-        this.renderList();
-        this.modalEl.style.display = 'flex';
-        this.modalEl.classList.add('show');
+        this.settingsEl.innerHTML = `<div class="indicator-editor-empty">${html(
+            this.translate('Select an indicator from the list'),
+        )}</div>`;
+        this.searchInput.value = '';
+        // The category tab keeps whatever the user last chose, and the list is re-filtered
+        // through it. Reopening on All instead would leave the strip reading Trend over a list
+        // that also shows Volatility and Momentum rows.
+        this.applyFilter();
+        this.moveIntoFullscreen();
+        this.modal.open();
         this.shown = true;
-        if (this.searchInput) setTimeout(() => this.searchInput?.focus(), 100);
+        setTimeout(() => this.searchInput.focus(), FOCUS_DELAY_MS);
     }
 
+    /** Opens the picker so that whatever is added next lands in this pane. */
     showForPane(paneId: string): void {
         this.show();
         this.targetPaneId = paneId;
     }
 
-    showEdit(id: string | number): void {
+    /**
+     * Opens the editor on one indicator.
+     *
+     * Takes either id the page might be holding: the legend and the pane headers carry the
+     * engine's runtime id, the workspace carries the stable persistence id.
+     */
+    showEdit(indicatorId: string | number): void {
         this.show();
-        const snapshot = this.resolveSnapshot(id);
-        if (snapshot) this.renderEditor(snapshot);
+        const snapshot = this.resolveSnapshot(indicatorId);
+        if (snapshot !== undefined) this.renderEditor(snapshot);
     }
 
+    /** Closes the dialog through the host's modal controller. */
     hide(): void {
-        if (!this.modalEl) return;
-        this.modalEl.style.display = 'none';
-        this.modalEl.classList.remove('show');
-        this.shown = false;
+        this.modal.close();
     }
 
+    /** Detaches every listener. The dialog cannot be reopened afterwards. */
     dispose(): void {
-        this.events?.abort();
-        this.events = null;
-        this.controller?.unsubscribe(this.handleControllerChange);
-        this.catalog?.unsubscribe(this.handleCatalogChange);
-        this.templates?.unsubscribe(this.handleTemplateChange);
-        this.controller = null;
-        this.catalog = null;
-        this.templates = null;
+        if (this.disposed) return;
+        this.disposed = true;
+        this.events.abort();
+        this.controller.unsubscribe(this.handleControllerChange);
+        this.catalog.unsubscribe(this.handleCatalogChange);
+        this.templates.unsubscribe(this.handleTemplateChange);
+        this.restoreFromFullscreen();
         this.shown = false;
     }
 
-    /** Compatibility hook retained for terminal hosts that opened the old editor directly. */
-    _showSettings(typeId: string, editId?: string | number): void {
-        if (editId !== undefined) {
-            const snapshot = this.resolveSnapshot(editId);
-            if (snapshot) this.renderEditor(snapshot);
-            return;
-        }
-        this.renderAddSettings(typeId);
+    /**
+     * Native fullscreen puts the chart panel in the browser's top layer, and a dialog left in
+     * `document.body` renders underneath it - the user presses the button and sees nothing at
+     * all. Moving the dialog inside the fullscreen element puts it in the same layer; the
+     * modal controller's close handler moves it back.
+     */
+    private moveIntoFullscreen(): void {
+        if (this.restoreParent !== null) return;
+        const target = fullscreenElement();
+        const parent = this.root.parentElement;
+        if (target === null || parent === null || target === parent) return;
+        this.restoreParent = parent;
+        target.appendChild(this.root);
     }
 
-    private filterList(): void {
-        this.renderList();
+    private restoreFromFullscreen(): void {
+        if (this.restoreParent === null) return;
+        this.restoreParent.appendChild(this.root);
+        this.restoreParent = null;
     }
 
     private renderCategoryTabs(): void {
-        const tabs = this.modalEl?.querySelector('.indicator-category-tabs');
-        if (!tabs) return;
         const groups = IndicatorSettings.GROUPS as readonly string[];
         const categories = [
-            ['All', T.t('All')],
-            [FAVORITES_GROUP, T.t('Favorites')],
-            ...groups.map(group => [group, T.t(group)]),
+            ['All', this.translate('All')],
+            [FAVORITES_GROUP, this.translate('Favorites')],
+            ...groups.map(group => [group, this.translate(group)]),
         ] as const;
-        tabs.innerHTML = categories
+        this.tabsEl.innerHTML = categories
             .map(([group, label], index) => {
                 return `<button type="button" class="indicator-category-tab${
                     index === 0 ? ' active' : ''
@@ -236,80 +336,135 @@ export class IndicatorDialog {
             }).join('');
     }
 
-    private renderList(): void {
-        if (!this.listEl || !this.catalog) return;
-        const activeTab = this.modalEl?.querySelector(
-            '.indicator-category-tab.active',
-        ) as HTMLElement | null;
-        const group = activeTab?.dataset.group || 'All';
-        const entries = this.catalog.search({
-            text: this.searchInput?.value || '',
-            category: group === 'All' || group === FAVORITES_GROUP ? undefined : group,
-            favoritesOnly: group === FAVORITES_GROUP,
-        });
-        const indicators = entries.map(entry => IndicatorSettings.getIndicator(entry.id))
-            .filter(indicator => indicator !== null);
-        if (indicators.length === 0) {
-            this.listEl.innerHTML = `<div class="indicator-list-empty">${html(T.t(
-                group === FAVORITES_GROUP ? 'No favorite indicators' : 'No indicators found',
-            ))}</div>`;
-            return;
-        }
-        this.listEl.innerHTML = indicators.map((indicator) => {
-            const translatedFullName = T.t(indicator.fullName);
-            const favorite = this.catalog!.isFavorite(indicator.id);
-            return `<div class="indicator-list-item" data-id="${attr(indicator.id)}">
-                <button type="button" class="indicator-favorite-toggle${
-                    favorite ? ' is-favorite' : ''
-                }" aria-pressed="${favorite}" title="${attr(T.t(
-                    favorite ? 'Remove from favorites' : 'Add to favorites',
-                ))}">${favorite ? '&#9733;' : '&#9734;'}</button>
-                <button type="button" class="indicator-list-select">
-                    <span class="indicator-list-info">
-                        <span class="indicator-list-name">${html(indicator.name)}</span>
-                        <span class="indicator-list-fullname">${html(translatedFullName)}</span>
-                    </span>
-                    <span class="indicator-list-group">${html(T.t(indicator.group))}</span>
-                </button>
-            </div>`;
-        }).join('');
-        this.listEl.querySelectorAll('.indicator-list-item').forEach((element) => {
-            const item = element as HTMLElement;
-            item.querySelector('.indicator-list-select')?.addEventListener('click', () => {
-                const id = item.dataset.id;
-                if (!id) return;
-                this.selectedType = id;
-                this.renderAddSettings(id);
-            });
-            item.querySelector('.indicator-favorite-toggle')?.addEventListener('click', () => {
-                const id = item.dataset.id;
-                if (!id || !this.catalog) return;
-                void this.catalog.toggleFavorite(id).catch(error => this.showError(error));
-            });
+    /**
+     * Renders every catalog entry once.
+     *
+     * Filtering then only toggles rows, so the scroll position and the caret in the search box
+     * survive every keystroke.
+     */
+    private buildList(): void {
+        const entries = this.catalog.entries();
+        this.listEl.innerHTML = entries.map(entry => this.listRowHtml(entry)).join('')
+            + '<div class="indicator-list-empty"></div>';
+        const elements = this.listEl.querySelectorAll('.indicator-list-item');
+        const signal = this.events.signal;
+        this.rows = entries.map((entry, index) => {
+            const element = elements[index] as HTMLElement;
+            element.querySelector('.indicator-list-select')?.addEventListener('click', () => (
+                this.renderAddSettings(entry.id)
+            ), { signal });
+            const favorite = requireElement<HTMLElement>(element, '.indicator-favorite-toggle');
+            favorite.addEventListener('click', () => (
+                void this.catalog.toggleFavorite(entry.id).catch(error => this.showError(error))
+            ), { signal });
+            return {
+                id: entry.id,
+                element,
+                favorite,
+                searchKey: `${entry.name} ${entry.fullName} ${this.translate(entry.fullName)}`
+                    .toLocaleLowerCase(),
+            };
         });
     }
 
+    private listRowHtml(entry: IndicatorCatalogEntry): string {
+        const favorite = this.catalog.isFavorite(entry.id);
+        return `<div class="indicator-list-item" data-id="${attr(entry.id)}">
+            <button type="button" class="indicator-favorite-toggle${
+                favorite ? ' is-favorite' : ''
+            }" aria-pressed="${favorite}" title="${attr(this.translate(
+                favorite ? 'Remove from favorites' : 'Add to favorites',
+            ))}">${favorite ? FAVORITE_ON : FAVORITE_OFF}</button>
+            <button type="button" class="indicator-list-select">
+                <span class="indicator-list-info">
+                    <span class="indicator-list-name">${html(entry.name)}</span>
+                    <span class="indicator-list-fullname">${html(
+                        this.translate(entry.fullName),
+                    )}</span>
+                </span>
+                <span class="indicator-list-group">${html(
+                    this.translate(entry.categoryLabel),
+                )}</span>
+            </button>
+        </div>`;
+    }
+
+    private syncFavorites(): void {
+        for (const row of this.rows) {
+            const favorite = this.catalog.isFavorite(row.id);
+            row.favorite.classList.toggle('is-favorite', favorite);
+            row.favorite.setAttribute('aria-pressed', String(favorite));
+            row.favorite.title = this.translate(
+                favorite ? 'Remove from favorites' : 'Add to favorites',
+            );
+            row.favorite.textContent = favorite ? FAVORITE_ON : FAVORITE_OFF;
+        }
+        this.applyFilter();
+    }
+
+    /**
+     * Shows the rows the tab and the query select, and hides the rest.
+     *
+     * Two ways of matching text, because users type two different things. The catalog answers a
+     * folded token-AND query over ids, names, categories and aliases, which is what finds an
+     * indicator by its category or by a translated alias. A plain case-insensitive substring
+     * over name, full name and translated full name is what finds one when the typed run of
+     * characters spans a space that the token split would have thrown away. A row matching
+     * either way stays on screen.
+     */
+    private applyFilter(): void {
+        const query = this.searchInput.value.trim();
+        const group = this.activeGroup();
+        const favoritesOnly = group === FAVORITES_GROUP;
+        const category = group === 'All' || favoritesOnly ? undefined : group;
+        const eligible = idSet(this.catalog.search({ category, favoritesOnly }));
+        const matched = query.length === 0
+            ? null
+            : idSet(this.catalog.search({ text: query, category, favoritesOnly }));
+        const needle = query.toLocaleLowerCase();
+        let visible = 0;
+        for (const row of this.rows) {
+            const show = eligible.has(row.id)
+                && (matched === null || matched.has(row.id) || row.searchKey.includes(needle));
+            row.element.style.display = show ? '' : 'none';
+            if (show) visible++;
+        }
+        this.emptyEl.textContent = this.translate(
+            favoritesOnly ? 'No favorite indicators' : 'No indicators found',
+        );
+        this.emptyEl.style.display = visible > 0 ? 'none' : '';
+    }
+
+    private activeGroup(): string {
+        const active = this.tabsEl.querySelector('.indicator-category-tab.active') as HTMLElement | null;
+        return active?.dataset.group || 'All';
+    }
+
     private renderAddSettings(typeId: string): void {
-        if (!this.settingsEl) return;
         const settings = IndicatorSettings.getIndicator(typeId);
-        if (!settings) return;
+        if (!settings) {
+            this.host.notify(this.translate('Unknown indicator: {0}', typeId), 'error');
+            return;
+        }
         this.editingId = null;
         this.editingSnapshot = null;
         const defaultPane = this.targetPaneId
-            || (settings.pane === 'overlay' ? '__main__' : '__new__');
+            ?? (settings.pane === 'overlay' ? '__main__' : '__new__');
         const parameterRows = (settings.params as any[]).map(parameter => (
-            legacyParameterRow(parameter)
+            catalogParameterRow(this.translate, parameter)
         )).join('');
         this.settingsEl.innerHTML = `
-            <div class="indicator-settings-title">${html(T.t(settings.name))}</div>
+            <div class="indicator-settings-title">${html(this.translate(settings.name))}</div>
             <section class="indicator-editor-section">
-                <div class="indicator-section-title">${html(T.t('Inputs'))}</div>
-                <div class="indicator-settings-params">${parameterRows || emptyValue('No inputs')}</div>
+                <div class="indicator-section-title">${html(this.translate('Inputs'))}</div>
+                <div class="indicator-settings-params">${
+                    parameterRows || emptyValue(this.translate, 'No inputs')
+                }</div>
             </section>
             <section class="indicator-editor-section">
-                <div class="indicator-section-title">${html(T.t('Placement'))}</div>
+                <div class="indicator-section-title">${html(this.translate('Placement'))}</div>
                 <div class="indicator-param-row">
-                    <label class="indicator-param-label">${html(T.t('Pane'))}</label>
+                    <label class="indicator-param-label">${html(this.translate('Pane'))}</label>
                     <select class="indicator-editor-select indicator-target-select">
                         ${this.paneOptions(defaultPane, true)}
                     </select>
@@ -317,8 +472,8 @@ export class IndicatorDialog {
             </section>
             <div class="indicator-editor-error" hidden></div>
             <div class="indicator-editor-actions">
-                <button type="button" class="btn btn-sm btn-primary indicator-add-btn">
-                    ${html(T.t('Add {0}', T.t(settings.name)))}
+                <button type="button" class="indicator-btn indicator-btn-primary indicator-add-btn">
+                    ${html(this.translate('Add {0}', this.translate(settings.name)))}
                 </button>
             </div>`;
         this.settingsEl.querySelector('.indicator-add-btn')?.addEventListener('click', () => (
@@ -327,105 +482,110 @@ export class IndicatorDialog {
     }
 
     private renderEditor(snapshot: IndicatorControllerSnapshot): void {
-        if (!this.settingsEl || !this.controller) return;
         this.editingId = snapshot.id;
         this.editingSnapshot = snapshot;
         const parameterRows = snapshot.parameterDefinitions.map((definition) => (
-            parameterRow(definition, snapshot.parameters[definition.id])
+            parameterRow(this.translate, definition, snapshot.parameters[definition.id])
         )).join('');
         const sourceOptions = this.sourceOptions(snapshot);
         const selectedSource = sourceValue(snapshot.source);
-        const outputRows = snapshot.outputs.map(output => outputRow(output)).join('');
+        const outputRows = snapshot.outputs.map(output => outputRow(this.translate, output)).join('');
         const templateSourceNote = snapshot.source.kind === IndicatorSourceKind.IndicatorOutput
-            ? `<div class="indicator-template-note">${html(T.t(
+            ? `<div class="indicator-template-note">${html(this.translate(
                 'The runtime indicator source is not stored in portable templates',
             ))}</div>` : '';
         const sourceWarning = snapshot.sourceStatus.available ? '' : `
             <div class="indicator-source-warning">
-                ${html(sourceUnavailableText(snapshot.sourceStatus.reason))}
+                ${html(sourceUnavailableText(this.translate, snapshot.sourceStatus.reason))}
             </div>`;
 
         this.settingsEl.innerHTML = `
             <div class="indicator-settings-title">
-                <span>${html(T.t('Edit {0}', snapshot.name))}</span>
+                <span>${html(this.translate('Edit {0}', this.translate(snapshot.name)))}</span>
                 <span class="indicator-editor-id">${html(snapshot.id)}</span>
             </div>
             <section class="indicator-editor-section">
-                <div class="indicator-section-title">${html(T.t('Inputs'))}</div>
-                <div class="indicator-settings-params">${parameterRows || emptyValue('No inputs')}</div>
+                <div class="indicator-section-title">${html(this.translate('Inputs'))}</div>
+                <div class="indicator-settings-params">${
+                    parameterRows || emptyValue(this.translate, 'No inputs')
+                }</div>
             </section>
             <section class="indicator-editor-section">
-                <div class="indicator-section-title">${html(T.t('Source and placement'))}</div>
+                <div class="indicator-section-title">${html(
+                    this.translate('Source and placement'),
+                )}</div>
                 <div class="indicator-param-row indicator-param-row-wide">
-                    <label class="indicator-param-label">${html(T.t('Source'))}</label>
+                    <label class="indicator-param-label">${html(this.translate('Source'))}</label>
                     <select class="indicator-editor-select indicator-source-select">
                         ${selectOptions(sourceOptions, selectedSource)}
                     </select>
                 </div>
                 ${sourceWarning}
                 <div class="indicator-param-row">
-                    <label class="indicator-param-label">${html(T.t('Pane'))}</label>
+                    <label class="indicator-param-label">${html(this.translate('Pane'))}</label>
                     <select class="indicator-editor-select indicator-target-select">
                         ${this.paneOptions(snapshot.paneId ?? '__main__', false)}
                     </select>
                 </div>
                 <div class="indicator-param-row">
-                    <label class="indicator-param-label">${html(T.t('Price scale'))}</label>
+                    <label class="indicator-param-label">${html(
+                        this.translate('Price scale'),
+                    )}</label>
                     <select class="indicator-editor-select indicator-scale-select">
                         ${this.scaleOptions(snapshot.paneId, snapshot.priceScaleId)}
                     </select>
                     <span class="indicator-effective-scale">
-                        ${html(T.t('Effective: {0}', snapshot.effectivePriceScaleId))}
+                        ${html(this.translate('Effective: {0}', snapshot.effectivePriceScaleId))}
                     </span>
                 </div>
                 <label class="indicator-toggle-row">
                     <input type="checkbox" class="indicator-visible-input"${
                         snapshot.visible ? ' checked' : ''
                     } />
-                    <span>${html(T.t('Show indicator'))}</span>
+                    <span>${html(this.translate('Show indicator'))}</span>
                 </label>
             </section>
             <section class="indicator-editor-section indicator-output-section">
-                <div class="indicator-section-title">${html(T.t('Outputs'))}</div>
+                <div class="indicator-section-title">${html(this.translate('Outputs'))}</div>
                 <div class="indicator-output-header" aria-hidden="true">
-                    <span>${html(T.t('Output'))}</span>
-                    <span>${html(T.t('Color'))}</span>
-                    <span>${html(T.t('Width'))}</span>
-                    <span>${html(T.t('Style'))}</span>
-                    <span>${html(T.t('Precision'))}</span>
+                    <span>${html(this.translate('Output'))}</span>
+                    <span>${html(this.translate('Color'))}</span>
+                    <span>${html(this.translate('Width'))}</span>
+                    <span>${html(this.translate('Style'))}</span>
+                    <span>${html(this.translate('Precision'))}</span>
                 </div>
                 <div class="indicator-output-list">${outputRows}</div>
             </section>
             <section class="indicator-editor-section indicator-template-section">
-                <div class="indicator-section-title">${html(T.t('Templates'))}</div>
+                <div class="indicator-section-title">${html(this.translate('Templates'))}</div>
                 <div class="indicator-template-existing">
                     <select class="indicator-editor-select indicator-template-select"
-                        aria-label="${attr(T.t('Indicator template'))}">
+                        aria-label="${attr(this.translate('Indicator template'))}">
                         ${this.templateOptions(snapshot.type)}
                     </select>
-                    <button type="button" class="btn btn-sm indicator-template-apply-btn">
-                        ${html(T.t('Apply'))}
+                    <button type="button" class="indicator-btn indicator-template-apply-btn">
+                        ${html(this.translate('Apply'))}
                     </button>
-                    <button type="button" class="btn btn-sm indicator-template-update-btn">
-                        ${html(T.t('Update'))}
+                    <button type="button" class="indicator-btn indicator-template-update-btn">
+                        ${html(this.translate('Update'))}
                     </button>
-                    <button type="button" class="btn btn-sm indicator-template-remove-btn">
-                        ${html(T.t('Delete'))}
+                    <button type="button" class="indicator-btn indicator-template-remove-btn">
+                        ${html(this.translate('Delete'))}
                     </button>
                 </div>
                 <div class="indicator-template-create">
                     <input type="text" class="indicator-template-name"
-                        placeholder="${attr(T.t('Template name'))}" />
-                    <button type="button" class="btn btn-sm indicator-template-create-btn">
-                        ${html(T.t('Save as template'))}
+                        placeholder="${attr(this.translate('Template name'))}" />
+                    <button type="button" class="indicator-btn indicator-template-create-btn">
+                        ${html(this.translate('Save as template'))}
                     </button>
                 </div>
                 ${templateSourceNote}
             </section>
             <div class="indicator-editor-error" hidden></div>
             <div class="indicator-editor-actions">
-                <button type="button" class="btn btn-sm btn-primary indicator-save-btn">
-                    ${html(T.t('Save'))}
+                <button type="button" class="indicator-btn indicator-btn-primary indicator-save-btn">
+                    ${html(this.translate('Save'))}
                 </button>
             </div>`;
 
@@ -433,7 +593,7 @@ export class IndicatorDialog {
             '.indicator-target-select',
         ) as HTMLSelectElement | null;
         paneSelect?.addEventListener('change', () => {
-            const scale = this.settingsEl?.querySelector(
+            const scale = this.settingsEl.querySelector(
                 '.indicator-scale-select',
             ) as HTMLSelectElement | null;
             if (scale) scale.innerHTML = this.scaleOptions(
@@ -458,19 +618,21 @@ export class IndicatorDialog {
     }
 
     private addIndicator(typeId: string): void {
-        if (!this.settingsEl || !this.indicatorEngine) return;
         try {
             const parameters = readParameters(this.settingsEl);
             const pane = this.settingsEl.querySelector(
                 '.indicator-target-select',
-            ) as HTMLSelectElement | null;
-            const entry = this.indicatorEngine.add(typeId, parameters, pane?.value);
-            if (!entry) throw new Error(T.t('Indicator could not be added'));
-            const snapshot = this.controller?.get(entry.persistenceId);
+            ) as HTMLSelectElement;
+            const entry = this.engine.add(typeId, parameters, pane.value);
+            if (entry === null) throw new Error(this.translate('Indicator could not be added'));
+            const snapshot = this.controller.get(entry.persistenceId);
             this.renderActiveList();
-            if (snapshot) this.renderEditor(snapshot);
-            TerminalUtils.showToast(
-                T.t('{0} added', T.t(IndicatorSettings.getIndicator(typeId)?.name || typeId)),
+            if (snapshot !== undefined) this.renderEditor(snapshot);
+            this.host.notify(
+                this.translate(
+                    '{0} added',
+                    this.translate(IndicatorSettings.getIndicator(typeId)?.name || typeId),
+                ),
                 'success',
             );
         } catch (error) {
@@ -479,20 +641,19 @@ export class IndicatorDialog {
     }
 
     private saveIndicator(id: string): void {
-        if (!this.settingsEl || !this.controller) return;
         try {
             const updated = this.updateIndicatorFromEditor(id);
             this.renderActiveList();
+            // Re-open the editor on the saved snapshot: an update replaces the runtime entry, so
+            // the panel would otherwise sit on one that no longer exists.
             this.renderEditor(updated);
-            TerminalUtils.showToast(T.t('Indicator updated'), 'success');
+            this.host.notify(this.translate('Indicator updated'), 'success');
         } catch (error) {
             this.showError(error);
         }
     }
 
     private updateIndicatorFromEditor(id: string): IndicatorControllerSnapshot {
-        if (!this.settingsEl || !this.controller)
-            throw new Error('sschart: indicator editor is unavailable');
         const sourceSelect = this.settingsEl.querySelector(
             '.indicator-source-select',
         ) as HTMLSelectElement;
@@ -533,7 +694,7 @@ export class IndicatorDialog {
             const precision = precisionValue.length === 0
                 ? undefined : Number(precisionValue);
             if (colorValue === undefined && previous?.color !== undefined)
-                throw new TypeError(T.t('Output color cannot be empty'));
+                throw new TypeError(this.translate('Output color cannot be empty'));
             if (colorValue !== previous?.color && colorValue !== undefined)
                 next.color = colorValue;
             if (widthValue !== previous?.lineWidth)
@@ -560,13 +721,12 @@ export class IndicatorDialog {
     }
 
     private bindTemplateEditor(snapshot: IndicatorControllerSnapshot): void {
-        if (!this.settingsEl || !this.templates) return;
         const select = this.settingsEl.querySelector(
             '.indicator-template-select',
         ) as HTMLSelectElement | null;
         const syncButtons = (): void => {
             const disabled = !select?.value;
-            this.settingsEl?.querySelectorAll(
+            this.settingsEl.querySelectorAll(
                 '.indicator-template-apply-btn, .indicator-template-update-btn, '
                 + '.indicator-template-remove-btn',
             ).forEach(button => { (button as HTMLButtonElement).disabled = disabled; });
@@ -577,15 +737,15 @@ export class IndicatorDialog {
         this.settingsEl.querySelector('.indicator-template-create-btn')
             ?.addEventListener('click', () => {
                 try {
-                    const name = (this.settingsEl!.querySelector(
+                    const name = (this.settingsEl.querySelector(
                         '.indicator-template-name',
                     ) as HTMLInputElement).value;
                     const updated = this.updateIndicatorFromEditor(snapshot.id);
-                    const creating = this.templates!.create(name, updated.id);
+                    const creating = this.templates.create(name, updated.id);
                     this.renderEditor(updated);
                     void creating.then((template) => {
                         this.refreshTemplateSelect(updated.type, template.id);
-                        TerminalUtils.showToast(T.t('Indicator template saved'), 'success');
+                        this.host.notify(this.translate('Indicator template saved'), 'success');
                     }).catch(error => this.showError(error));
                 } catch (error) { this.showError(error); }
             });
@@ -594,10 +754,10 @@ export class IndicatorDialog {
                 try {
                     if (!select?.value) return;
                     const templateId = select.value;
-                    const updated = this.templates!.apply(templateId, snapshot.id);
+                    const updated = this.templates.apply(templateId, snapshot.id);
                     this.renderEditor(updated);
                     this.refreshTemplateSelect(updated.type, templateId);
-                    TerminalUtils.showToast(T.t('Indicator template applied'), 'success');
+                    this.host.notify(this.translate('Indicator template applied'), 'success');
                 } catch (error) { this.showError(error); }
             });
         this.settingsEl.querySelector('.indicator-template-update-btn')
@@ -606,30 +766,29 @@ export class IndicatorDialog {
                     if (!select?.value) return;
                     const templateId = select.value;
                     const updated = this.updateIndicatorFromEditor(snapshot.id);
-                    const replacing = this.templates!.replace(templateId, updated.id);
+                    const replacing = this.templates.replace(templateId, updated.id);
                     this.renderEditor(updated);
                     void replacing.then(() => {
                         this.refreshTemplateSelect(updated.type, templateId);
-                        TerminalUtils.showToast(T.t('Indicator template updated'), 'success');
+                        this.host.notify(this.translate('Indicator template updated'), 'success');
                     }).catch(error => this.showError(error));
                 } catch (error) { this.showError(error); }
             });
         this.settingsEl.querySelector('.indicator-template-remove-btn')
             ?.addEventListener('click', () => {
                 if (!select?.value) return;
-                void this.templates!.remove(select.value).then(() => {
+                void this.templates.remove(select.value).then(() => {
                     this.refreshTemplateSelect(snapshot.type);
-                    TerminalUtils.showToast(T.t('Indicator template deleted'), 'success');
+                    this.host.notify(this.translate('Indicator template deleted'), 'success');
                 }).catch(error => this.showError(error));
             });
     }
 
     private renderActiveList(): void {
-        if (!this.activeListEl || !this.controller) return;
         const indicators = this.controller.indicators();
         if (indicators.length === 0) {
             this.activeListEl.innerHTML = `<div class="no-indicators">${html(
-                T.t('No active indicators'),
+                this.translate('No active indicators'),
             )}</div>`;
             return;
         }
@@ -637,40 +796,42 @@ export class IndicatorDialog {
             <div class="active-indicator-item" data-id="${attr(indicator.id)}">
                 <button type="button" class="active-indicator-visible${
                     indicator.visible ? ' is-visible' : ''
-                }" title="${attr(T.t(indicator.visible ? 'Hide' : 'Show'))}">
+                }" title="${attr(this.translate(indicator.visible ? 'Hide' : 'Show'))}">
                     ${indicator.visible ? '&#9679;' : '&#9675;'}
                 </button>
                 <button type="button" class="active-indicator-name active-indicator-edit">
-                    <span>${html(indicator.name)} (${html(Object.values(indicator.parameters).join(', '))})</span>
-                    <small>${html(indicator.paneId ?? T.t('Main chart'))}</small>
+                    <span>${html(this.translate(indicator.name))} (${html(
+                        Object.values(indicator.parameters).join(', '),
+                    )})</span>
+                    <small>${html(indicator.paneId ?? this.translate('Main chart'))}</small>
                 </button>
-                <button type="button" class="btn btn-sm active-indicator-remove"
-                    title="${attr(T.t('Remove'))}">&times;</button>
+                <button type="button" class="indicator-btn active-indicator-remove"
+                    title="${attr(this.translate('Remove'))}">&times;</button>
             </div>`).join('');
         this.activeListEl.querySelectorAll('.active-indicator-item').forEach((element) => {
             const row = element as HTMLElement;
             const id = row.dataset.id;
             if (!id) return;
             row.querySelector('.active-indicator-edit')?.addEventListener('click', () => {
-                const snapshot = this.controller?.get(id);
-                if (snapshot) this.renderEditor(snapshot);
+                const snapshot = this.controller.get(id);
+                if (snapshot !== undefined) this.renderEditor(snapshot);
             });
             row.querySelector('.active-indicator-visible')?.addEventListener('click', () => {
-                const snapshot = this.controller?.get(id);
-                if (!snapshot) return;
-                try { this.controller!.setVisible(id, !snapshot.visible); }
+                const snapshot = this.controller.get(id);
+                if (snapshot === undefined) return;
+                try { this.controller.setVisible(id, !snapshot.visible); }
                 catch (error) { this.showError(error); }
             });
             row.querySelector('.active-indicator-remove')?.addEventListener('click', () => {
-                const entry = this.indicatorEngine?.getIndicators().find(
-                    (candidate: any) => candidate.persistenceId === id,
+                const entry = this.engine.getIndicators().find(
+                    candidate => candidate.persistenceId === id,
                 );
-                if (!entry) return;
-                this.indicatorEngine.remove(entry.id);
+                if (entry === undefined) return;
+                this.engine.remove(entry.id);
                 if (this.editingId === id) {
                     this.editingId = null;
                     this.editingSnapshot = null;
-                    if (this.settingsEl) this.settingsEl.innerHTML = emptyValue('Indicator removed');
+                    this.settingsEl.innerHTML = emptyValue(this.translate, 'Indicator removed');
                 }
                 this.renderActiveList();
             });
@@ -678,29 +839,28 @@ export class IndicatorDialog {
     }
 
     private resolveSnapshot(id: string | number): IndicatorControllerSnapshot | undefined {
-        if (!this.controller) return undefined;
         if (typeof id === 'string') {
             const byStable = this.controller.get(id);
-            if (byStable) return byStable;
+            if (byStable !== undefined) return byStable;
         }
-        const entry = this.indicatorEngine?.getIndicators().find(
-            (candidate: any) => candidate.id === id || candidate.persistenceId === id,
+        const entry = this.engine.getIndicators().find(
+            candidate => candidate.id === id || candidate.persistenceId === id,
         );
-        return entry ? this.controller.get(entry.persistenceId) : undefined;
+        return entry === undefined ? undefined : this.controller.get(entry.persistenceId);
     }
 
     private templateOptions(indicatorType: string, selected = ''): string {
         const values: Array<readonly [string, string]> = [
-            ['', T.t('Select template')],
-            ...(this.templates?.templates(indicatorType).map(template => (
+            ['', this.translate('Select template')],
+            ...this.templates.templates(indicatorType).map(template => (
                 [template.id, template.name] as const
-            )) || []),
+            )),
         ];
         return selectOptions(values, selected);
     }
 
     private refreshTemplateSelect(indicatorType: string, selected?: string): void {
-        const select = this.settingsEl?.querySelector(
+        const select = this.settingsEl.querySelector(
             '.indicator-template-select',
         ) as HTMLSelectElement | null;
         if (!select) return;
@@ -712,10 +872,10 @@ export class IndicatorDialog {
 
     private paneOptions(selected: string, includeNew: boolean): string {
         const values: Array<readonly [string, string]> = [];
-        if (includeNew) values.push(['__new__', T.t('New pane')]);
-        values.push(['__main__', T.t('Main chart')]);
-        for (const pane of this.chart?.panes?.() || []) {
-            const id = pane.id?.();
+        if (includeNew) values.push(['__new__', this.translate('New pane')]);
+        values.push(['__main__', this.translate('Main chart')]);
+        for (const pane of this.chart.panes()) {
+            const id = pane.id();
             if (typeof id === 'string' && id !== 'main') values.push([id, id]);
         }
         if (!values.some(([value]) => value === selected)) values.push([selected, selected]);
@@ -725,13 +885,11 @@ export class IndicatorDialog {
     private scaleOptions(paneId: string | null, selected: string | null): string {
         const ids = new Set(['right', 'left']);
         const targetId = paneId ?? 'main';
-        const pane = (this.chart?.panes?.() || []).find((candidate: any) => (
-            candidate.id?.() === targetId
-        ));
-        for (const id of pane?.priceScaleIds?.() || []) ids.add(id);
+        const pane = this.chart.panes().find(candidate => candidate.id() === targetId);
+        for (const id of pane?.priceScaleIds() ?? []) ids.add(id);
         if (selected) ids.add(selected);
         const values: Array<readonly [string, string]> = [
-            ['', T.t('Auto')],
+            ['', this.translate('Auto')],
             ...[...ids].map(id => [id, id] as const),
         ];
         return selectOptions(values, selected ?? '');
@@ -741,41 +899,50 @@ export class IndicatorDialog {
         current: IndicatorControllerSnapshot,
     ): Array<readonly [string, string]> {
         const options: Array<readonly [string, string]> = [
-            ['candles', T.t('OHLC candles')],
+            ['candles', this.translate('OHLC candles')],
             ...CANDLE_FIELDS.map(([field, label]) => (
-                [`field:${field}`, T.t(label)] as const
+                [`field:${field}`, this.translate(label)] as const
             )),
         ];
-        for (const indicator of this.controller?.indicators() || []) {
+        for (const indicator of this.controller.indicators()) {
             if (indicator.id === current.id) continue;
             for (const output of indicator.outputs) {
                 options.push([
                     `indicator:${encodeURIComponent(indicator.id)}:${encodeURIComponent(output.id)}`,
-                    `${indicator.name} → ${output.name}`,
+                    `${this.translate(indicator.name)} → ${output.name}`,
                 ]);
             }
         }
         const selected = sourceValue(current.source);
         if (!options.some(([value]) => value === selected))
-            options.push([selected, T.t('Unavailable source')]);
+            options.push([selected, this.translate('Unavailable source')]);
         return options;
     }
 
     private showError(error: unknown): void {
-        const target = this.settingsEl?.querySelector('.indicator-editor-error') as HTMLElement | null;
+        const target = this.settingsEl.querySelector(
+            '.indicator-editor-error',
+        ) as HTMLElement | null;
         const message = error instanceof Error ? error.message : String(error);
-        if (target) {
+        if (target !== null) {
             target.textContent = message;
             target.hidden = false;
         } else {
-            TerminalUtils.showToast(message, 'error');
+            this.host.notify(message, 'error');
         }
     }
 }
 
-/** Builds the terminal catalog model while leaving preference persistence to the host. */
+/**
+ * Builds the catalog model over the built-in indicator settings, leaving preference persistence
+ * to the host.
+ *
+ * `storage` is null on a page that keeps favorites for the session only; the alternative is a
+ * host-owned store, and which of the two it is has to be said at the call site.
+ */
 export function createIndicatorCatalogController(
-    storage?: IndicatorFavoritesStorage,
+    translate: Translate,
+    storage: IndicatorFavoritesStorage | null,
 ): IndicatorCatalogController {
     return new IndicatorCatalogController({
         entries: IndicatorSettings.getAllIndicators().map(indicator => ({
@@ -787,18 +954,22 @@ export function createIndicatorCatalogController(
             aliases: [
                 ...(indicator.aliases || []),
                 indicator.serverKind,
-                T.t(indicator.name),
-                T.t(indicator.fullName),
-                T.t(indicator.group),
+                translate(indicator.name),
+                translate(indicator.fullName),
+                translate(indicator.group),
             ].filter((value): value is string => typeof value === 'string' && value.length > 0),
         })),
-        storage,
+        storage: storage ?? undefined,
     });
 }
 
-function parameterRow(definition: any, value: IndicatorParameterValue | undefined): string {
+function parameterRow(
+    translate: Translate,
+    definition: any,
+    value: IndicatorParameterValue | undefined,
+): string {
     const id = attr(definition.id);
-    const label = html(T.t(definition.name || humanize(definition.id)));
+    const label = html(translate(definition.name || humanize(definition.id)));
     if (definition.type === 'boolean') {
         return `<label class="indicator-toggle-row">
             <input type="checkbox" data-parameter-id="${id}" data-parameter-type="boolean"${
@@ -823,8 +994,9 @@ function parameterRow(definition: any, value: IndicatorParameterValue | undefine
             } /></div>`;
 }
 
-function legacyParameterRow(parameter: any): string {
-    return parameterRow({
+/** The picker's add form reads the catalog's own parameter descriptors, which are shaped differently. */
+function catalogParameterRow(translate: Translate, parameter: any): string {
+    return parameterRow(translate, {
         id: parameter.key,
         name: parameter.label || humanize(parameter.key),
         type: parameter.type === 'bool' ? 'boolean'
@@ -838,7 +1010,10 @@ function legacyParameterRow(parameter: any): string {
     }, parameter.default);
 }
 
-function outputRow(output: IndicatorControllerSnapshot['outputs'][number]): string {
+function outputRow(
+    translate: Translate,
+    output: IndicatorControllerSnapshot['outputs'][number],
+): string {
     const style = output.style;
     const color = style.color ?? '';
     const picker = /^#[0-9a-f]{6}$/i.test(color) ? color : '#ffffff';
@@ -850,20 +1025,20 @@ function outputRow(output: IndicatorControllerSnapshot['outputs'][number]): stri
         <div class="indicator-color-editor">
             <input type="color" class="indicator-output-color-picker" value="${attr(picker)}" />
             <input type="text" class="indicator-output-color" value="${attr(color)}"
-                aria-label="${attr(T.t('Color'))}" />
+                aria-label="${attr(translate('Color'))}" />
         </div>
         <input type="number" class="indicator-output-width" min="0.1" step="0.5"
             value="${style.lineWidth === undefined ? '' : attr(String(style.lineWidth))}"
-            placeholder="${attr(T.t('Auto'))}" aria-label="${attr(T.t('Width'))}" />
-        <select class="indicator-output-line-style" aria-label="${attr(T.t('Style'))}">
+            placeholder="${attr(translate('Auto'))}" aria-label="${attr(translate('Width'))}" />
+        <select class="indicator-output-line-style" aria-label="${attr(translate('Style'))}">
             ${selectOptions([
-                ['', T.t('Auto')],
-                ...LINE_STYLES.map(([value, label]) => [String(value), T.t(label)] as const),
+                ['', translate('Auto')],
+                ...LINE_STYLES.map(([value, label]) => [String(value), translate(label)] as const),
             ], style.lineStyle === undefined ? '' : String(style.lineStyle))}
         </select>
-        <select class="indicator-output-precision" aria-label="${attr(T.t('Precision'))}">
+        <select class="indicator-output-precision" aria-label="${attr(translate('Precision'))}">
             ${selectOptions([
-                ['', T.t('Auto')],
+                ['', translate('Auto')],
                 ...Array.from({ length: 13 }, (_, precision) => (
                     [String(precision), String(precision)] as const
                 )),
@@ -925,8 +1100,42 @@ function numberAttribute(name: string, value: unknown): string {
         ? ` ${name}="${attr(String(value))}"` : '';
 }
 
-function emptyValue(text: string): string {
-    return `<div class="indicator-editor-empty">${html(T.t(text))}</div>`;
+function emptyValue(translate: Translate, text: string): string {
+    return `<div class="indicator-editor-empty">${html(translate(text))}</div>`;
+}
+
+function idSet(entries: readonly IndicatorCatalogEntry[]): ReadonlySet<string> {
+    return new Set(entries.map(entry => entry.id));
+}
+
+/**
+ * Refuses a dependency that cannot answer what the dialog will ask of it.
+ *
+ * Duck-typed rather than `instanceof`, so a page that wires the dialog from plain JavaScript -
+ * and a test that stands a dependency in - fails on the missing method by name instead of on a
+ * class identity it was never going to satisfy.
+ */
+function requireMethods<T>(value: T, name: string, methods: readonly string[]): T {
+    const target = value as unknown as Record<string, unknown> | null;
+    if (target === null || typeof target !== 'object'
+        || methods.some(method => typeof target[method] !== 'function')) {
+        throw new TypeError(`sschart: indicator dialog ${name} is invalid`);
+    }
+    return value;
+}
+
+function requireElement<T extends Element>(root: ParentNode, selector: string): T {
+    const element = root.querySelector(selector);
+    if (element === null)
+        throw new TypeError(`sschart: indicator dialog markup is missing '${selector}'`);
+    return element as T;
+}
+
+/** WebKit still exposes the prefixed property only, and that is where iOS reports fullscreen. */
+function fullscreenElement(): Element | null {
+    const prefixed = (document as { webkitFullscreenElement?: Element | null })
+        .webkitFullscreenElement;
+    return document.fullscreenElement ?? prefixed ?? null;
 }
 
 function html(value: unknown): string {

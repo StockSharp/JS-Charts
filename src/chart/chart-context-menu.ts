@@ -1,314 +1,330 @@
-// Chart Context Menu — replaces the browser's default right-click menu
-// (Image / Copy / Save — useless on a chart canvas) with a trading-flavoured
-// menu and Ctrl+click shortcuts:
+// Chart Context Menu — replaces the browser's default right-click menu (Image / Copy / Save,
+// useless on a chart canvas) with a floating menu at the cursor.
 //
-//   right-click            → floating menu at cursor with Buy / Sell @ price,
-//                            Add indicator, Cancel orders at level
-//   Ctrl + left click      → prefill order-entry Buy side with the clicked
-//                            price and flash the side panel
-//   Ctrl + right click     → same for Sell side
+// Ctrl+click is the chart engine's gesture, not this menu's: the engine draws the order-placement
+// preview under the cursor and emits an OrderPlace signal, and the page turns that signal into an
+// order. So a Ctrl-modified right-click here only suppresses the native menu and returns —
+// answering the same click twice would place one order and offer another.
 //
-// We never submit an order automatically — clicking just seeds the order-entry
-// form. The user still has to press Place. A misclick on a $50k BTC bar must
-// not turn into a real order.
+// Nothing in this module buys, sells, cancels or adds an indicator. It contributes no rows at all:
+// every one comes from the page through `provideItems`, so a trading terminal offers order rows, a
+// chart with an indicator engine offers the picker, and a page with neither offers what it can do
+// instead. Picking a row calls back and closes; the menu never acts on its own.
 //
-// Wire-up: terminal-app calls init(containerEl, candleSeries, hooks). Hooks
-// are framework-agnostic callbacks so this class can live without knowing
-// OrderEntryWidget or IndicatorDialog directly.
+// What it does own is the framing: where the menu opens, what price the click landed on, and the
+// rules drawn between the groups the page returns.
+//
+// Wire-up: the page calls init(container, options) and disposes on teardown.
 
-import { T } from './i18n.js';
-// NOTE: IndicatorDialog / OrderEntryWidget imports dropped for the standalone
-// library — this menu only ever talks to them through the optional _hooks
-// callbacks (onAddIndicator / onBuyAtPrice / …), never by symbol.
+import type { ChartUiHost, Translate } from './chart-host.js';
 
-/**
- * The host callbacks. Every one is optional — the menu greys an entry out (or drops the
- * action) when the embedder did not wire it, which is how the same menu serves the demo
- * (indicators only) and the full terminal (indicators + order actions).
- */
-export interface ChartContextMenuHooks {
-    /** Sub-pane menu: no price/order entries, plus a "Remove pane" action. */
-    paneMode?: boolean;
-    onAddIndicator?(): void;
-    onAddPane?(): void;
-    onRemovePane?(): void;
-    onBuyAtPrice?(price: number): void;
-    onSellAtPrice?(price: number): void;
-    onCancelOrdersAt?(price: number): void;
-    /** Resting orders sitting at that price level; only its length is read here. */
-    findOrdersAtPrice?(price: number): readonly unknown[];
-}
-
-/**
- * The price series, described structurally: the terminal passes its charting library's series
- * handle and the demo passes this package's, and pixel -> price is all the menu needs. It is
- * nullable because a sub-pane menu (`paneMode`) has no price axis and passes null.
- */
+/// The price series, described structurally: the terminal passes its charting library's series
+/// handle and the demo passes this package's, and pixel -> price is all the menu needs.
 export interface PriceCoordinateSource {
+    /// Price at a vertical offset inside the chart container, or null where the scale has no
+    /// answer for that pixel.
     coordinateToPrice(coordinate: number): number | null;
 }
 
-/** One rendered menu row — either a divider or a clickable action. */
-interface ChartContextMenuSeparator {
-    separator: true;
+/// What a row means, which is what decides its colour. The stylesheet owns the colours; a row
+/// states its intent so a page never has to name a CSS class.
+export const ChartContextMenuTone = {
+    /// An ordinary action.
+    Neutral: 'neutral',
+    /// Adding, or buying.
+    Positive: 'positive',
+    /// Selling, cancelling, removing.
+    Negative: 'negative',
+} as const;
+export type ChartContextMenuToneValue = typeof ChartContextMenuTone[keyof typeof ChartContextMenuTone];
+
+const TONE_CLASSES: Readonly<Record<ChartContextMenuToneValue, string>> = {
+    [ChartContextMenuTone.Neutral]: '',
+    [ChartContextMenuTone.Positive]: 'chart-ctx-buy',
+    [ChartContextMenuTone.Negative]: 'chart-ctx-sell',
+};
+
+/// One clickable row.
+///
+/// There is deliberately no way to describe a separator: a provider states what its group holds,
+/// and the menu draws the rules between groups, so no contributor can leave a rule hanging above
+/// rows that turned out to be empty.
+export interface ChartContextMenuEntry {
+    /// Stable id for the row, rendered as `data-ctx-key`. Identifies the row to tests and to the
+    /// page; never shown to the reader.
+    readonly key: string;
+
+    /// The text to show, already worded and already translated by whoever built the row.
+    readonly label: string;
+
+    /// Class list for the row's icon element, e.g. `bi bi-graph-up`. Omitted leaves the row's icon
+    /// slot empty rather than unindented: rows in one menu line up their labels whether or not
+    /// every one of them has an icon, because a ragged column is harder to read than a plain one.
+    ///
+    /// A class rather than an image or a glyph, because the icon font is the page's choice - this
+    /// module ships none and knows the name of none.
+    readonly icon?: string;
+
+    /// Defaults to `Neutral`.
+    readonly tone?: ChartContextMenuToneValue;
+
+    /// Shown but not clickable. Defaults to clickable.
+    ///
+    /// A row that cannot act right now stays in place greyed out rather than disappearing: a menu
+    /// whose rows move between right-clicks is one the reader has to re-read every time.
+    readonly disabled?: boolean;
+
+    /// Do the thing. The menu closes first, so this may open a dialog of its own.
+    invoke(): void;
 }
-interface ChartContextMenuAction {
-    separator?: false;
-    key: string;
-    label: string;
-    cls?: string;
-    disabled?: boolean;
-    action(): void;
+
+/// What the page is told about the click it is being asked to answer.
+export interface ChartContextMenuContext {
+    /// Price under the cursor, or null when the click landed where no price axis answers — a
+    /// sub-pane header, or a chart whose scale is not ready.
+    readonly price: number | null;
+
+    /// `price` as the page words it, or `'--'`. Handed over already formatted so every row spells
+    /// the same number the same way.
+    readonly priceText: string;
+
+    /// The page's own services, for a provider that lives away from its wiring.
+    readonly host: ChartUiHost;
 }
-type ChartContextMenuItem = ChartContextMenuSeparator | ChartContextMenuAction;
+
+/// The rows a page contributes to one right-click, in groups.
+///
+/// Every row in the menu comes from here - the module contributes none of its own. That is not
+/// minimalism: a right-click menu offers what the page can do, and only the page knows what that
+/// is. "Add indicator" is no more the menu's business than "Buy here" is; a page with no indicator
+/// engine would have been left rendering a row that cannot act.
+///
+/// A function rather than a fixed array because what a page offers depends on the click: the price
+/// under the cursor is in the label ("Cancel 3 orders at 41,250.5"), and what is resting at that
+/// price decides whether the row can act at all. An array would have to be rebuilt by the page on
+/// every mouse move to say as much.
+///
+/// Groups are how a page asks for a dividing rule: one is drawn between groups and never above the
+/// first or below the last, so an empty group costs nothing. Returning no groups, or only empty
+/// ones, suppresses the menu entirely - which is the honest answer when there is nothing to offer.
+export type ChartContextMenuProvider =
+    (context: ChartContextMenuContext) => readonly (readonly ChartContextMenuEntry[])[];
+
+/// Where the menu is mounted, which decides whether there is a price to answer about.
+export const ChartContextMenuMode = {
+    /// The price chart.
+    Chart: 'chart',
+    /// One indicator sub-pane's header.
+    Pane: 'pane',
+} as const;
+export type ChartContextMenuModeValue = typeof ChartContextMenuMode[keyof typeof ChartContextMenuMode];
+
+interface ChartContextMenuOptionsBase {
+    /// Words and numbers, from the page.
+    readonly host: ChartUiHost;
+
+    /// Every row the menu shows, asked for on each open.
+    readonly provideItems: ChartContextMenuProvider;
+}
+
+/// Mounting the menu on the price chart.
+export interface ChartContextMenuChartOptions extends ChartContextMenuOptionsBase {
+    readonly mode: typeof ChartContextMenuMode.Chart;
+
+    /// Pixel -> price for the series currently drawn. Switching chart type replaces the series, so
+    /// the new one has to arrive through `setPriceSource`.
+    readonly priceSource: PriceCoordinateSource;
+}
+
+/// Mounting the menu on a sub-pane header. There is no price axis here, so the context carries no
+/// price and the rows cannot speak of one.
+export interface ChartContextMenuPaneOptions extends ChartContextMenuOptionsBase {
+    readonly mode: typeof ChartContextMenuMode.Pane;
+}
+
+export type ChartContextMenuOptions = ChartContextMenuChartOptions | ChartContextMenuPaneOptions;
 
 export class ChartContextMenu {
     _container: HTMLElement | null;
-    _series: PriceCoordinateSource | null;
-    // Shell-supplied callback bag; its shape is the `hooks` parameter of init(). The field stays
-    // `any` because it is null outside the init()..dispose() window, and describing that as
-    // `ChartContextMenuHooks | null` would mean re-writing every one of the ~20 `this._hooks.x &&
-    // this._hooks.x()` guards the shell relies on.
-    _hooks: any;
+    _options: ChartContextMenuOptions | null;
+    _priceSource: PriceCoordinateSource | null;
     _menuEl: HTMLDivElement | null;
-    _onContextMenu: ((e: MouseEvent) => void) | null;
-    _onMouseDown: ((e: MouseEvent) => void) | null;
-    _onDocClick: ((e: MouseEvent) => void) | null;
-    _onEsc: ((e: KeyboardEvent) => void) | null;
+    _onContextMenu: ((event: MouseEvent) => void) | null;
+    _onDocumentClick: ((event: MouseEvent) => void) | null;
+    _onEscape: ((event: KeyboardEvent) => void) | null;
 
     constructor() {
         this._container = null;
-        this._series = null;
-        this._hooks = null;
+        this._options = null;
+        this._priceSource = null;
         this._menuEl = null;
 
         this._onContextMenu = null;
-        this._onMouseDown = null;
-        this._onDocClick = null;
-        this._onEsc = null;
+        this._onDocumentClick = null;
+        this._onEscape = null;
     }
 
-    /// Attach handlers and build the menu DOM. Idempotent — re-calls
-    /// dispose() first so callers can re-init after a chart rebuild
-    /// (timeframe / symbol change recreates the candle series).
-    init(containerEl: HTMLElement | null, candleSeries: PriceCoordinateSource | null, hooks: ChartContextMenuHooks | null) {
-        if (!containerEl) return;
+    /// Attach handlers and build the menu DOM. Idempotent — re-calls dispose() first so callers
+    /// can re-init after a chart rebuild (timeframe / symbol change recreates the candle series).
+    init(containerEl: HTMLElement, options: ChartContextMenuOptions): void {
         this.dispose();
 
         this._container = containerEl;
-        this._series = candleSeries;
-        this._hooks = hooks || {};
+        this._options = options;
+        this._priceSource = options.mode === ChartContextMenuMode.Chart ? options.priceSource : null;
 
-        // Floating menu lives on body so it floats above panel-resizers and
-        // GoldenLayout splitters. Positioned absolute at click coordinates.
+        // The menu lives on body so it floats above panel resizers and docking splitters, and is
+        // placed at the click coordinates. Everything but left/top/display comes from the
+        // stylesheet, including `position: fixed` and the stacking order.
         this._menuEl = document.createElement('div');
         this._menuEl.className = 'chart-ctx-menu';
         this._menuEl.style.display = 'none';
         document.body.appendChild(this._menuEl);
 
-        this._onContextMenu = (e) => this._handleContextMenu(e);
-        this._onMouseDown = (e) => this._handleMouseDown(e);
-        this._onDocClick = (e) => {
-            if (this._menuEl && !this._menuEl.contains(e.target as Node)) this._hideMenu();
+        this._onContextMenu = (event) => this.openAt(event);
+        this._onDocumentClick = (event) => {
+            if (this._menuEl !== null && !this._menuEl.contains(event.target as Node)) this.close();
         };
-        this._onEsc = (e) => { if (e.key === 'Escape') this._hideMenu(); };
+        this._onEscape = (event) => {
+            if (event.key === 'Escape') this.close();
+        };
 
-        this._container!.addEventListener('contextmenu', this._onContextMenu as EventListener);
-        this._container!.addEventListener('mousedown', this._onMouseDown as EventListener);
-        document.addEventListener('click', this._onDocClick as EventListener);
-        document.addEventListener('keydown', this._onEsc as EventListener);
+        containerEl.addEventListener('contextmenu', this._onContextMenu);
+        document.addEventListener('click', this._onDocumentClick);
+        document.addEventListener('keydown', this._onEscape);
     }
 
-    /// Update the candle series reference — chart-type-switcher swaps in a
-    /// new series on each candle/line/area/bar toggle, so the coord→price
-    /// conversion needs the latest one to stay accurate.
-    setCandleSeries(series: PriceCoordinateSource | null) {
-        this._series = series;
+    /// Hand over the series to read prices from. The chart-type switcher builds a new series on
+    /// every candle/line/area/bar toggle, and the old one stops answering, so pixel -> price is
+    /// wrong until the new one arrives. Null while a switch is in flight and nothing can answer.
+    setPriceSource(source: PriceCoordinateSource | null): void {
+        this._priceSource = source;
     }
 
-    dispose() {
-        if (this._container && this._onContextMenu) {
-            this._container.removeEventListener('contextmenu', this._onContextMenu as EventListener);
-            this._container.removeEventListener('mousedown', this._onMouseDown as EventListener);
+    /// Open the menu for a right-click the caller routed here itself.
+    ///
+    /// Sub-panes share one canvas with the chart, so the pane manager hit-tests the click against
+    /// the pane bands and hands the event to the menu of the pane that was hit.
+    openAt(event: MouseEvent): void {
+        // Ctrl+right belongs to the engine's order-placement gesture, which suppresses the native
+        // menu on its own. Bail rather than pop this menu on top of it.
+        if (event.ctrlKey) {
+            event.preventDefault();
+            return;
         }
-        document.removeEventListener('click', (this._onDocClick || (() => {})) as EventListener);
-        document.removeEventListener('keydown', (this._onEsc || (() => {})) as EventListener);
-        if (this._menuEl) { try { this._menuEl.remove(); } catch {} }
-        this._container = null;
-        this._series = null;
-        this._hooks = null;
-        this._menuEl = null;
+
+        event.preventDefault();
+        this._showMenu(event.clientX, event.clientY, this._priceAt(event.clientY));
     }
 
-    _priceAt(clientY: number) {
-        if (!this._series || !this._container) return null;
-        const rect = this._container.getBoundingClientRect();
-        const y = clientY - rect.top;
+    /// Hide the menu, leaving it attached and ready for the next right-click.
+    close(): void {
+        if (this._menuEl !== null) this._menuEl.style.display = 'none';
+    }
+
+    dispose(): void {
+        if (this._container !== null && this._onContextMenu !== null)
+            this._container.removeEventListener('contextmenu', this._onContextMenu);
+        if (this._onDocumentClick !== null) document.removeEventListener('click', this._onDocumentClick);
+        if (this._onEscape !== null) document.removeEventListener('keydown', this._onEscape);
+        this._menuEl?.remove();
+
+        this._container = null;
+        this._options = null;
+        this._priceSource = null;
+        this._menuEl = null;
+        this._onContextMenu = null;
+        this._onDocumentClick = null;
+        this._onEscape = null;
+    }
+
+    _priceAt(clientY: number): number | null {
+        if (this._priceSource === null || this._container === null) return null;
+
+        const y = clientY - this._container.getBoundingClientRect().top;
         try {
-            const p = this._series.coordinateToPrice(y);
-            return (typeof p === 'number' && Number.isFinite(p)) ? p : null;
+            const price = this._priceSource.coordinateToPrice(y);
+            return typeof price === 'number' && Number.isFinite(price) ? price : null;
         } catch {
             return null;
         }
     }
 
-    _handleMouseDown(e: MouseEvent) {
-        // Only Ctrl-modified clicks. Plain right-click still pops the menu
-        // via the contextmenu event. Shift / Alt left alone so they stay
-        // available for drawing-tool modifiers.
-        if (!e.ctrlKey) return;
-        // Browser fires contextmenu on right-mousedown; that handler will
-        // also see ctrlKey and route to the same hook. Suppress the menu so
-        // Ctrl+right doesn't show menu AND fire sell — pick one path
-        // (mousedown) and short-circuit the other (contextmenu).
-        if (e.button !== 0 && e.button !== 2) return;
+    _showMenu(x: number, y: number, price: number | null): void {
+        const options = this._options;
+        const menuEl = this._menuEl;
+        if (options === null || menuEl === null) return;
 
-        e.preventDefault();
-        e.stopPropagation();
-        this._hideMenu();
+        const host = options.host;
+        const priceText = price === null ? '--' : host.formatters.price(price);
 
-        const price = this._priceAt(e.clientY);
-        if (price == null) return;
-
-        if (e.button === 0 && this._hooks.onBuyAtPrice)
-            this._hooks.onBuyAtPrice(price);
-        else if (e.button === 2 && this._hooks.onSellAtPrice)
-            this._hooks.onSellAtPrice(price);
-    }
-
-    _handleContextMenu(e: MouseEvent) {
-        // Ctrl+right was handled by mousedown — just suppress the browser menu.
-        if (e.ctrlKey) { e.preventDefault(); return; }
-
-        e.preventDefault();
-        const price = this._priceAt(e.clientY);
-        this._showMenu(e.clientX, e.clientY, price);
-    }
-
-    _showMenu(x: number, y: number, price: number | null) {
-        if (!this._menuEl) return;
-
-        // i18n.js exposes `const T = { t(key, ...args) }` at script-scope.
-        // window.T is a separate Razor-injected flat dict (no .t method) — using
-        // it here would fall through to the identity fn and leave labels English.
-        const t = (typeof T !== 'undefined' && T.t) ? T.t.bind(T) : (s: string) => s;
-
-        let items: ChartContextMenuItem[];
-        if (this._hooks.paneMode) {
-            // Sub-pane menu: the same right-click affordance as the main chart,
-            // scoped to the pane — add a study into THIS pane, or drop the pane.
-            // No order/price actions (a sub-pane isn't the price axis).
-            items = [
-                {
-                    key: 'addToPane', label: t('Add indicator…'),
-                    action: () => this._hooks.onAddIndicator && this._hooks.onAddIndicator(),
-                },
-                { separator: true },
-                {
-                    key: 'removePane', label: t('Remove pane'), cls: 'chart-ctx-sell',
-                    disabled: !this._hooks.onRemovePane,
-                    action: () => this._hooks.onRemovePane && this._hooks.onRemovePane(),
-                },
-            ];
-        } else {
-            const fmt = (typeof window.TerminalUtils !== 'undefined' && window.TerminalUtils.formatPrice)
-                ? window.TerminalUtils.formatPrice
-                : (p: any) => String(p);
-
-            const priceLabel = price != null ? fmt(price) : '--';
-            const hasPrice = price != null;
-
-            // Hit-test the orders cache at this price level so the menu can
-            // (a) show a count, (b) disable the entry when nothing matches.
-            // Hook is optional — if the host didn't wire findOrdersAtPrice we
-            // fall back to "enabled when onCancelOrdersAt is wired" so the entry
-            // is still callable (the action handler itself toasts on no-match).
-            let cancelCount = 0;
-            if (hasPrice && typeof this._hooks.findOrdersAtPrice === 'function') {
-                try {
-                    const matches = this._hooks.findOrdersAtPrice(price);
-                    cancelCount = Array.isArray(matches) ? matches.length : 0;
-                } catch (err) { console.warn('[ctx-menu] findOrdersAtPrice', err); }
-            }
-            const cancelLabel = cancelCount > 0
-                ? t('Cancel {0} orders at {1}', cancelCount, priceLabel)
-                : t('Cancel orders at this price');
-            const cancelDisabled = !hasPrice
-                || !this._hooks.onCancelOrdersAt
-                || (typeof this._hooks.findOrdersAtPrice === 'function' && cancelCount === 0);
-
-            items = [
-                {
-                    key: 'buy', label: `${t('Buy')} @ ${priceLabel}`,
-                    cls: 'chart-ctx-buy', disabled: !hasPrice,
-                    action: () => this._hooks.onBuyAtPrice && this._hooks.onBuyAtPrice(price),
-                },
-                {
-                    key: 'sell', label: `${t('Sell')} @ ${priceLabel}`,
-                    cls: 'chart-ctx-sell', disabled: !hasPrice,
-                    action: () => this._hooks.onSellAtPrice && this._hooks.onSellAtPrice(price),
-                },
-                { separator: true },
-                {
-                    key: 'indicator', label: t('Add indicator…'),
-                    action: () => this._hooks.onAddIndicator && this._hooks.onAddIndicator(),
-                },
-                {
-                    key: 'addPane', label: t('Add pane…'),
-                    disabled: !this._hooks.onAddPane,
-                    action: () => this._hooks.onAddPane && this._hooks.onAddPane(),
-                },
-                {
-                    key: 'cancelOrders', label: cancelLabel,
-                    disabled: cancelDisabled,
-                    action: () => this._hooks.onCancelOrdersAt && this._hooks.onCancelOrdersAt(price),
-                },
-            ];
+        // A provider that throws costs its rows, not the menu: page code runs here, and a chart
+        // that stops answering right-clicks because of it is the worse failure.
+        let groups: readonly (readonly ChartContextMenuEntry[])[] = [];
+        try {
+            groups = options.provideItems({ price, priceText, host });
+        } catch (err) {
+            console.warn('[ctx-menu] provideItems', err);
         }
 
-        this._menuEl.innerHTML = '';
-        for (const it of items) {
-            if (it.separator) {
-                const sep = document.createElement('div');
-                sep.className = 'chart-ctx-sep';
-                this._menuEl.appendChild(sep);
-                continue;
+        menuEl.innerHTML = '';
+        let drawn = 0;
+        for (const group of groups) {
+            if (group.length === 0) continue;
+            if (drawn > 0) {
+                const separator = document.createElement('div');
+                separator.className = 'chart-ctx-sep';
+                menuEl.appendChild(separator);
             }
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = `chart-ctx-item ${it.cls || ''}`.trim();
-            btn.textContent = it.label;
-            if (it.disabled) {
-                btn.disabled = true;
-            } else {
-                btn.addEventListener('click', () => {
-                    this._hideMenu();
-                    try { it.action(); } catch (err) { console.warn('[ctx-menu]', err); }
-                });
-            }
-            this._menuEl.appendChild(btn);
+            for (const entry of group) menuEl.appendChild(this._renderEntry(entry));
+            drawn++;
         }
 
-        // Native :fullscreen на chart-panel кладёт её в top-layer браузера;
-        // элементы из document.body (где живёт menuEl) оказываются ПОД ним
-        // и контекст-меню становится невидимым. Перевешиваем меню внутрь
-        // fullscreen-элемента, чтобы оно тоже попало в top-layer.
-        const fsEl = (document as any).fullscreenElement || (document as any).webkitFullscreenElement;
-        const target = fsEl || document.body;
-        if (this._menuEl.parentElement !== target) target.appendChild(this._menuEl);
+        // Native :fullscreen puts the chart panel in the browser's top layer, above everything
+        // rooted in body — where the menu lives, and where it would be invisible. Move it into the
+        // fullscreen element so it shares that layer.
+        const fullscreenEl = document.fullscreenElement
+            ?? (document as unknown as { webkitFullscreenElement: Element | null }).webkitFullscreenElement;
+        const target: Element = fullscreenEl ?? document.body;
+        if (menuEl.parentElement !== target) target.appendChild(menuEl);
 
-        // Position then reveal — clamp inside viewport so the menu doesn't
-        // run off the right/bottom edge on clicks near the chart corner.
-        this._menuEl.style.display = 'block';
-        const w = this._menuEl.offsetWidth;
-        const h = this._menuEl.offsetHeight;
-        const maxX = window.innerWidth - w - 4;
-        const maxY = window.innerHeight - h - 4;
-        this._menuEl.style.left = Math.min(x, maxX) + 'px';
-        this._menuEl.style.top = Math.min(y, maxY) + 'px';
+        // Reveal, then place: the size is only measurable once it is displayed. Clamped to the
+        // viewport so a click near the chart's bottom-right corner does not push the menu off it.
+        menuEl.style.display = 'block';
+        const maxX = window.innerWidth - menuEl.offsetWidth - 4;
+        const maxY = window.innerHeight - menuEl.offsetHeight - 4;
+        menuEl.style.left = Math.min(x, maxX) + 'px';
+        menuEl.style.top = Math.min(y, maxY) + 'px';
     }
 
-    _hideMenu() {
-        if (this._menuEl) this._menuEl.style.display = 'none';
+    _renderEntry(entry: ChartContextMenuEntry): HTMLButtonElement {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `chart-ctx-item ${TONE_CLASSES[entry.tone ?? ChartContextMenuTone.Neutral]}`.trim();
+        button.dataset.ctxKey = entry.key;
+
+        // The slot is always drawn, even with no icon in it, so every label in a menu starts at the
+        // same x. `aria-hidden` because the icon repeats the label beside it and a reader hearing
+        // both hears it twice.
+        const icon = document.createElement('i');
+        icon.className = `chart-ctx-icon ${entry.icon ?? ''}`.trim();
+        icon.setAttribute('aria-hidden', 'true');
+        button.appendChild(icon);
+        button.appendChild(document.createTextNode(entry.label));
+
+        if (entry.disabled === true) {
+            button.disabled = true;
+            return button;
+        }
+
+        button.addEventListener('click', () => {
+            this.close();
+            try {
+                entry.invoke();
+            } catch (err) {
+                console.warn('[ctx-menu]', err);
+            }
+        });
+        return button;
     }
 }

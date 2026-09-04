@@ -12,7 +12,8 @@ import type {
     SeriesOptions,
     TimedSeriesData,
 } from '../core/chart-api.js';
-import { ChartContextMenu } from './chart-context-menu.js';
+import { ChartContextMenu, ChartContextMenuMode, ChartContextMenuTone } from './chart-context-menu.js';
+import type { ChartUiHost } from './chart-host.js';
 
 /** Layout patch an engine pane accepts — every pane option except its id. */
 type PaneLayoutPatch = Omit<PaneOptions, 'id'>;
@@ -106,23 +107,30 @@ interface PaneSnapshot {
     leftPriceScale?: ResolvedPriceScaleOptions;
 }
 
-/**
- * The part of an indicator-engine entry this file reads. The engine itself is
- * reached through the shell-owned `window._indicatorEngine` handle (`any`), so
- * its list elements arrive untyped and are described here instead.
- */
-interface IndicatorEntryRef {
-    id: number;
-    paneId: string | null;
+/// What a pane's own chrome needs from the page it is mounted in.
+export interface ChartPaneManagerOptions {
+    /// The element id of the chart the panes hang off.
+    readonly containerId: string;
+
+    /// Translation and formatting for the header and the per-pane menu.
+    readonly host: ChartUiHost;
+
+    /// Open the indicator picker aimed at this pane, from its menu.
+    onAddIndicatorToPane(paneId: string): void;
+
+    /// Drop every indicator drawn in this pane, from its menu. The pane goes with the last one.
+    onRemovePane(paneId: string): void;
 }
 
 /**
- * Terminal-UI chrome over the engine's native panes: HTML pane headers,
- * per-pane context menus, pane-id lookup and empty-pane restore. The engine
- * owns pane rendering and scales; this class only adds the terminal's DOM
- * headers/menus on top and never re-implements pane logic.
+ * Chrome over the engine's native panes: HTML pane headers, per-pane context menus, pane-id
+ * lookup and empty-pane restore. The engine owns pane rendering and scales; this class only adds
+ * the DOM headers and menus on top and never re-implements pane logic.
  */
 export class ChartPaneManager {
+    _host: ChartUiHost;
+    _onAddIndicatorToPane: (paneId: string) => void;
+    _onRemovePane: (paneId: string) => void;
     _containerId: string;
     _mainContainer: HTMLElement | null;
     _panes: Map<string, PaneEntry>;
@@ -132,13 +140,14 @@ export class ChartPaneManager {
     _wrapper: HTMLDivElement | null;
     _resizeObserver: ResizeObserver | null;
     _headerSyncFrame: number | null;
-    /** Whatever held the global before this manager took it, so dispose() can hand it back. */
-    _previousGlobalManager: ChartPaneManager | null = null;
     _onPointerMove: (() => void) | null;
     _onContextMenu: ((event: MouseEvent) => void) | null;
 
-    constructor(containerId: string) {
-        this._containerId = containerId;
+    constructor(options: ChartPaneManagerOptions) {
+        this._containerId = options.containerId;
+        this._host = options.host;
+        this._onAddIndicatorToPane = options.onAddIndicatorToPane;
+        this._onRemovePane = options.onRemovePane;
         this._mainContainer = null;
         this._panes = new Map();
         this._removedPanes = new Map();
@@ -170,9 +179,6 @@ export class ChartPaneManager {
         chartEl.style.height = '100%';
         chartEl.style.minHeight = '0';
 
-        const legendEl = document.getElementById('chartLegend');
-        if (legendEl) this._wrapper.appendChild(legendEl);
-
         this._onPointerMove = () => this._scheduleHeaderSync();
         chartEl.addEventListener('pointermove', this._onPointerMove);
         chartEl.addEventListener('pointerup', this._onPointerMove);
@@ -188,17 +194,20 @@ export class ChartPaneManager {
                 const size = pane.nativePane.getSize();
                 if (y < size.top || y > size.top + size.height) continue;
                 event.stopImmediatePropagation();
-                pane.ctxMenu?._handleContextMenu(event);
+                pane.ctxMenu?.openAt(event);
                 return;
             }
         };
         chartEl.addEventListener('contextmenu', this._onContextMenu, true);
+    }
 
-        // Remembered so dispose() can give the global back rather than leaving it naming a dead
-        // manager. Last-writer-wins is kept -- ChartLegend reads the global and a second init()
-        // taking it is the existing behaviour -- but a manager only clears what it actually set.
-        this._previousGlobalManager = window._chartPaneManager ?? null;
-        window._chartPaneManager = this;
+    /// Where a legend belongs: the box the chart and its sub-panes share, so a legend placed in it
+    /// floats over both and is clipped by neither. Null until `init` has built it.
+    ///
+    /// The manager used to move `#chartLegend` here itself, which meant a published module knew one
+    /// page's element id and no other page could be laid out at all.
+    legendLayer(): HTMLElement | null {
+        return this._wrapper;
     }
 
     getPaneByMeasure(measure: string | null) {
@@ -246,35 +255,31 @@ export class ChartPaneManager {
         paneEl.appendChild(header);
         this._wrapper.appendChild(paneEl);
 
-        header.addEventListener('click', (event) => {
-            const engine = window._indicatorEngine;
-            if (!engine) return;
-            const target = event.target as Element | null;
-            const remove = target?.closest('.legend-remove-btn') as HTMLElement | null;
-            if (remove) {
-                const id = parseInt(remove.dataset.indId!);
-                if (!isNaN(id)) engine.remove(id);
-                return;
-            }
-            const edit = target?.closest('.legend-edit-btn') as HTMLElement | null;
-            if (edit) {
-                const id = parseInt(edit.dataset.indId!);
-                const type = edit.dataset.indType;
-                if (!isNaN(id) && window.terminalApp?.openIndicatorEdit)
-                    window.terminalApp.openIndicatorEdit(id, type);
-            }
-        });
+        // The edit and remove buttons in this header are the legend's: it renders the rows into
+        // `.pane-values` and binds their handlers there, the same way it does for the main strip.
 
         const ctxMenu = new ChartContextMenu();
-        ctxMenu.init(header, null, {
-            paneMode: true,
-            onAddIndicator: () => window.terminalApp?.openIndicatorAddToPane?.(paneId),
-            onRemovePane: () => {
-                const engine = window._indicatorEngine;
-                if (!engine) return;
-                engine.getIndicators().filter((entry: IndicatorEntryRef) => entry.paneId === paneId)
-                    .forEach((entry: IndicatorEntryRef) => engine.remove(entry.id));
-            },
+        // A pane header's two actions are the manager's own, so it contributes them itself
+        // rather than asking the page to repeat what it already told the constructor.
+        const t = this._host.translate;
+        ctxMenu.init(header, {
+            mode: ChartContextMenuMode.Pane,
+            host: this._host,
+            provideItems: () => [
+                [{
+                    key: 'addToPane',
+                    label: t('Add indicator…'),
+                    icon: 'bi bi-graph-up',
+                    invoke: () => this._onAddIndicatorToPane(paneId),
+                }],
+                [{
+                    key: 'removePane',
+                    label: t('Remove pane'),
+                    icon: 'bi bi-trash3',
+                    tone: ChartContextMenuTone.Negative,
+                    invoke: () => this._onRemovePane(paneId),
+                }],
+            ],
         });
 
         this._panes.set(paneId, {
@@ -332,11 +337,15 @@ export class ChartPaneManager {
         pane.label = label;
     }
 
-    setPaneValuesHtml(paneId: string, html: string) {
+    /// The element a pane's indicator values belong in, or null once the pane is gone.
+    ///
+    /// An element rather than an HTML string: the legend builds its own nodes and binds its own
+    /// handlers to them, which is what lets the edit and remove buttons in a pane header work the
+    /// same way as the ones in the main strip.
+    getValuesElement(paneId: string): HTMLElement | null {
         const pane = this._panes.get(paneId);
-        if (!pane) return;
-        const values = pane.el.querySelector('.pane-values');
-        if (values) values.innerHTML = html || '';
+        if (pane === undefined) return null;
+        return pane.el.querySelector('.pane-values');
     }
 
     getPanes() { return Array.from(this._panes.keys()); }
@@ -375,9 +384,5 @@ export class ChartPaneManager {
         this._headerSyncFrame = null;
         this._onPointerMove = null;
         this._onContextMenu = null;
-        if (window._chartPaneManager === this) {
-            window._chartPaneManager = this._previousGlobalManager ?? undefined;
-        }
-        this._previousGlobalManager = null;
     }
 }

@@ -1,24 +1,22 @@
-// Standalone demo wiring for the real terminal chart stack. This bundles the
-// actual IndicatorEngine / IndicatorRenderer / ChartPaneManager / ChartLegend /
-// ChartContextMenu / IndicatorDialog modules (ported verbatim from the web
-// terminal) and drives them exactly the way terminal-app.ts does — no
-// reimplementation. The sschart engine is loaded separately and published as the
-// `SSChart` global; the modules reference it as a bare global.
-import { IndicatorEngine } from './indicators/indicator-engine.js';
-import { IndicatorRenderer } from './indicators/indicator-renderer.js';
-import { ChartPaneManager } from './chart-pane-manager.js';
-import { ChartLegend } from './chart-legend.js';
-import { ChartContextMenu } from './chart-context-menu.js';
-import {
-    IndicatorDialog,
-    createIndicatorCatalogController,
-} from './indicator-dialog.js';
+// Demo wiring for the chart UI layer.
+//
+// It mounts the layer the way a consumer does - one `createChartUi` call - which is what keeps that
+// API honest: an option awkward for somebody else is awkward here first. The chart-type switcher is
+// wired separately because this page is the one that switches renderings.
+//
+// The engine is loaded separately and published as the `SSChart` global.
 import { ChartTypeSwitcher } from './chart-type-switcher.js';
 import type { ChartOptions, OrderPlace } from '../core/chart-api.js';
-import { TerminalUtils } from './utils.js';
-import { T } from './i18n.js';
-import { IndicatorController } from '../workspace/indicator-controller.js';
-import { IndicatorTemplateController } from '../workspace/templates.js';
+import {
+    ChartType,
+    allChartTypes,
+    createChartUi,
+    defaultChartTypePalette,
+    isDerivedChartType,
+    localChartUiStorage,
+    standaloneHost,
+    type ChartTypeValue,
+} from './ui.js';
 import {
     getIndicatorPainterNames,
     hasIndicatorPainter,
@@ -27,9 +25,21 @@ import {
 
 declare const SSChart: any;
 
-// Globals the ported modules read at runtime (same names the terminal exposes).
-(window as any).TerminalUtils = TerminalUtils;
-(window as any).T = T;
+// The demo speaks English, formats numbers the package's own way and logs its messages. A real
+// page passes its own translator, its own price ladder and its own toast.
+const uiHost = standaloneHost;
+
+// What the legend's chart-type dropdown offers here: everything the switcher implements. A page
+// whose toolbar renders fewer buttons passes fewer entries.
+const CHART_TYPE_MENU = [
+    { value: ChartType.Candle, label: 'Candles', icon: 'bi bi-bar-chart-fill' },
+    { value: ChartType.Bar, label: 'Bars', icon: 'bi bi-bar-chart-line' },
+    { value: ChartType.Line, label: 'Line', icon: 'bi bi-graph-up' },
+    { value: ChartType.Area, label: 'Area', icon: 'bi bi-graph-up-arrow' },
+    { value: ChartType.HeikinAshi, label: 'Heikin-Ashi', icon: 'bi bi-bar-chart-steps' },
+    { value: ChartType.Renko, label: 'Renko', icon: 'bi bi-grid-3x3' },
+    { value: ChartType.PointFigure, label: 'Point and Figure', icon: 'bi bi-x-diamond' },
+];
 
 // Plugin surface for applications that consume the browser bundles. Module
 // consumers can import the same functions from indicators/painters/index.ts.
@@ -84,81 +94,23 @@ function boot() {
     try { if (SSChart.createSeriesMarkers && S.markers) SSChart.createSeriesMarkers(candleSeries, S.markers); } catch { /* */ }
     chart.timeScale().fitContent();
 
-    // Sub-pane manager for 'separate' (oscillator) indicators.
-    const paneManager = new ChartPaneManager('chartContainer');
-    paneManager.init(chart);
-
-    // Indicator renderer + engine.
-    const renderer = new IndicatorRenderer(chart);
-    const engine = new IndicatorEngine();
-    engine.setRenderer(renderer);
-    engine.setPaneManager(paneManager);
-    engine.onChange = () => { if (themeName !== 'dark') applyTheme(); };   // re-theme freshly-added sub-panes
-    (window as any)._indicatorEngine = engine;
-    engine.setCandles(live);              // shares the same array reference
-    const indicatorController = new IndicatorController({
-        engine,
-        commandStack: chart.commandStack(),
+    // The whole UI layer in one call: pane chrome, indicator engine and renderer, the three
+    // controllers, the legend, the picker and the right-click menu, wired in the order that works.
+    // The dialog's markup is this page's own, server-rendered and localised, so it is handed over
+    // rather than built; a page with none omits it and gets one.
+    const dialogEl = document.getElementById('indicatorModal');
+    if (!dialogEl) return;
+    const ui = createChartUi(chart, {
+        container,
+        host: uiHost,
+        priceSource: candleSeries,
+        chartTypes: CHART_TYPE_MENU,
+        storage: localChartUiStorage('sschart'),
+        dialogRoot: dialogEl,
     });
-    (window as any)._indicatorController = indicatorController;
-
-    // Crosshair legend (OHLCV + indicator values; overlays in the main legend,
-    // oscillators in each sub-pane header).
-    const legend = new ChartLegend();
-    legend.init('chartLegend', chart);
-    legend.setIndicatorEngine(engine);
-    legend.setRawCandles(live);
-
-    // Indicator picker dialog.
-    const indicatorCatalogController = createIndicatorCatalogController({
-        load: () => {
-            const value = window.localStorage.getItem('sschart:indicator-favorites:v1');
-            if (value === null) return null;
-            const parsed: unknown = JSON.parse(value);
-            if (!Array.isArray(parsed) || parsed.some(id => typeof id !== 'string'))
-                throw new TypeError('invalid stored indicator favorites');
-            return parsed;
-        },
-        save: ids => window.localStorage.setItem(
-            'sschart:indicator-favorites:v1',
-            JSON.stringify(ids),
-        ),
-    });
-    void indicatorCatalogController.loadFavorites().catch(error => {
-        console.warn('[Indicators] failed to load favorites:', error);
-    });
-    (window as any)._indicatorCatalogController = indicatorCatalogController;
-    const indicatorTemplateController = new IndicatorTemplateController({
-        indicators: indicatorController,
-        storage: {
-            load: () => window.localStorage.getItem('sschart:indicator-templates:v1'),
-            save: serialized => window.localStorage.setItem(
-                'sschart:indicator-templates:v1',
-                serialized,
-            ),
-        },
-    });
-    void indicatorTemplateController.load().catch(error => {
-        console.warn('[Indicators] failed to load templates:', error);
-    });
-    (window as any)._indicatorTemplateController = indicatorTemplateController;
-    const dialog = new IndicatorDialog();
-    dialog.init(
-        'indicatorModal',
-        engine,
-        indicatorController,
-        chart,
-        indicatorCatalogController,
-        indicatorTemplateController,
-    );
-
-    // Edit hook fired by the legend ✎ and the sub-pane header ✎ buttons.
-    const openIndicatorEdit = (id: number, _type: string) => dialog.showEdit(id);
-    legend.onEditIndicator = openIndicatorEdit;
-    // ＋ on a sub-pane header opens the picker targeting that pane, so the next
-    // indicator lands in it instead of spawning its own pane.
-    const openIndicatorAddToPane = (paneId: string) => dialog.showForPane(paneId);
-    (window as any).terminalApp = { openIndicatorEdit, openIndicatorAddToPane };
+    const { engine, legend, dialog, menu } = ui;
+    engine.onChange = () => { if (themeName !== 'dark') applyTheme(); };   // re-theme new sub-panes
+    ui.setCandles(live);
 
     // "+ Pane" toolbar button and the main chart's right-click "Add pane…" open
     // the picker with the target preset to a NEW pane — picking a study and
@@ -166,24 +118,28 @@ function boot() {
     // labelled by its indicator, and cancelling leaves no empty pane behind).
     const addNewPane = () => dialog.showForPane('__new__');
 
-    // Right-click context menu ("Add indicator…" / "Add pane…" open the dialog).
-    const menu = new ChartContextMenu();
-    menu.init(container, candleSeries, { onAddIndicator: () => dialog.show(), onAddPane: addNewPane });
-
-    // Chart-type switcher (candle / bar / line / area / heikin), driven by the
-    // legend's per-pane chart-type dropdown.
-    const typeSwitcher = new ChartTypeSwitcher();
-    typeSwitcher.init(chart, candleSeries, volumeSeries);
+    // Chart-type switcher, driven by the legend's per-pane chart-type dropdown.
+    const typeSwitcher = new ChartTypeSwitcher({
+        chart,
+        series: candleSeries,
+        initialType: ChartType.Candle,
+        availableTypes: allChartTypes,
+        palette: defaultChartTypePalette,
+        host: uiHost,
+    });
     typeSwitcher.setRawCandles(live);   // shares the ref, so it always rebuilds from the live window
-    let currentType = 'candle';
-    legend.onChartTypeChange = (type: string) => {
-        const s = typeSwitcher.switchType(type);
-        if (s) { candleSeries = s; menu.setCandleSeries(s); }
-        currentType = type;
+    // The one place that learns a switch happened, so nothing has to patch a method to find out.
+    typeSwitcher.onSeriesChanged(series => {
+        candleSeries = series;
+        menu.setPriceSource(series);
+    });
+    legend.onChartTypeChange = (value: string) => {
+        const type = value as ChartTypeValue;
+        typeSwitcher.switchType(type);
         // Renko / P&F own one stable streaming transform. The visible custom
         // series and indicators therefore consume identical boxes/columns while
         // live replacements rewind only their provisional tail.
-        const derived = type === 'renko' || type === 'pf';
+        const derived = isDerivedChartType(type);
         const indicatorCandles = typeSwitcher.getIndicatorCandles();
         engine.setCandles(indicatorCandles, { rewindableTail: derived });
         legend.setRawCandles(indicatorCandles);
@@ -210,7 +166,10 @@ function boot() {
         const opts: ChartOptions = chartTheme(p);
         chart.applyOptions(opts);
         candleSeries.applyOptions({ upColor: p.up, downColor: p.down, wickUpColor: p.up, wickDownColor: p.down });
-        paneManager.getPanes().forEach((id: string) => { const c = paneManager.getChart(id); if (c) c.applyOptions(opts); });
+        ui.paneManager.getPanes().forEach((id: string) => {
+            const pane = ui.paneManager.getChart(id);
+            if (pane) pane.applyOptions(opts);
+        });
         const tb = document.getElementById('themeBtn');
         if (tb) tb.innerHTML = themeName === 'dark' ? '☀ Light' : '☾ Dark';
     }
@@ -229,7 +188,7 @@ function boot() {
     function step() {
         const bar = feed.next(5);
         const lv = S.levelsFor(bar);   // per-bar volume-by-price for the footprint (cluster / box) types
-        const derived = currentType === 'renko' || currentType === 'pf';
+        const derived = isDerivedChartType(typeSwitcher.getCurrentType());
         const last = live[live.length - 1];
         const newBar = bar.time !== last.time;
         if (newBar) {

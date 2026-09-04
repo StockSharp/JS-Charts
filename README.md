@@ -53,30 +53,78 @@ Or drop in the global build from a CDN — no bundler required:
 </script>
 ```
 
+### The UI layer
+
+The engine draws; `@stocksharp/chart/ui` draws the controls around it — the crosshair
+legend, the right-click menu, the chart-type switcher and the indicator picker.
+It is a separate entry point because a page can want one without the other: a
+report with a sparkline needs no menus.
+
+```ts
+import { createChart, CandlestickSeries } from '@stocksharp/chart';
+import { ChartLegend, standaloneHost, fullscreenMenuLayer } from '@stocksharp/chart/ui';
+import '@stocksharp/chart/ui.css';
+
+const legend = new ChartLegend({
+  container: document.getElementById('legend'),
+  host: standaloneHost,                 // your translator, formatters and toasts
+  paneHost: paneManager,
+  chartTypes: [{ value: 'candle', label: 'Candles', icon: 'bi bi-bar-chart-fill' }],
+  menuLayer: fullscreenMenuLayer,
+});
+legend.init(chart);
+```
+
+Every module here takes a `ChartUiHost`: the page words its own strings, formats
+its own numbers and shows its own messages. Nothing in the layer reaches for a
+global, which is what lets it render on a page that is not the terminal it grew
+up in. `standaloneHost` answers all three itself — English as written,
+magnitude-based numbers, messages to the console — and is where a first
+integration starts.
+
+In the browser it ships as `dist/sschartui.js`, publishing `SSChartUI`. Load the
+engine first: the UI layer reads it off the `SSChart` global rather than carrying
+a second copy, because a chart matches a series definition by identity and a
+definition from a second copy is one it does not know.
+
+```html
+<script src="https://unpkg.com/@stocksharp/indicators"></script>
+<script src="https://unpkg.com/@stocksharp/chart"></script>
+<script src="https://unpkg.com/@stocksharp/chart/dist/sschartui.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/@stocksharp/chart/styles/chart-ui.css" />
+```
+
+The stylesheet is required — those modules emit class names and nothing else.
+Every colour in it is a `--chart-ui-*` custom property with a dark default, so a
+page restyles by declaring the tokens rather than by overriding rules.
+
 ## What's here
 
 ```
 src/index.ts          public ESM entry (createChart, addSeries, timeScale, …)
 src/core/             the chart engine (canvas render, panes, scales, hit-test)
-src/chart/            the terminal chart stack, ported verbatim from Broker.Web.Trader:
+src/chart/            the UI layer, published as @stocksharp/chart/ui:
+  ui.ts               its public entry point
+  chart-host.ts       what a module asks of its page: translate, format, notify, modal
+  engine.ts           the engine, in one place, so the browser bundle can read it off
+                      the global instead of carrying a second copy
   indicators/         IndicatorEngine + IndicatorRenderer + IndicatorSettings +
                       painters/ (the drawing half; the maths is @stocksharp/indicators)
   chart-legend.ts     OHLCV + indicator-value legend (crosshair-driven)
-  chart-context-menu.ts   right-click menu
-  chart-pane-manager.ts   oscillator sub-panes (spine-synced time axes)
+  chart-context-menu.ts   right-click menu; a page contributes its own rows
+  chart-pane-manager.ts   oscillator sub-panes over the engine's native panes
   indicator-dialog.ts     indicator picker (search / categories / params / active list)
-  chart-type-switcher.ts  candle / bar / line / area / heikin / renko / P&F / cluster / box
-  i18n.ts, utils.ts   minimal shims (English fallback, formatPrice + showToast)
-  app.ts              demo wiring — drives the modules exactly as terminal-app.ts does
+  chart-type-switcher.ts  candle / bar / line / area / heikin / renko / P&F
+  app.ts              demo wiring — mounts the modules through their public options
+styles/chart-ui.css   the layer's stylesheet, published as @stocksharp/chart/ui.css
 demo/                 the showcase (index.html + terminal CSS + seeded market data)
-build.mjs             esbuild -> dist/sschart.js (SSChart global) + dist/chart-app.js;
-                      also copies the indicator package's dist/ssindicators.js beside them
+build.mjs             esbuild -> dist/sschart.js (SSChart global), dist/sschartui.js
+                      (SSChartUI) and dist/chart-app.js; also copies the indicator
+                      package's dist/ssindicators.js beside them
 ```
 
-The chart modules are the **same code the web terminal runs** — they were lifted
-out and decoupled from the terminal's Bootstrap / DI infrastructure so they build
-standalone. The engine (`src/index.ts` / `src/core/`) is the shared source of truth; the demo
-loads it as the `SSChart` global, then the chart-stack bundle on top.
+The engine (`src/index.ts` / `src/core/`) is the shared source of truth; the demo
+loads it as the `SSChart` global, then the UI layer on top.
 
 ## Demo
 
@@ -147,7 +195,8 @@ does not distribute candle volume across price bins. In a TypeScript build you c
 
 For the **full terminal experience** — indicator engine over the whole catalog,
 crosshair legend, oscillator sub-panes, right-click menu and the picker dialog —
-wire up the `src/chart` modules the way [`src/chart/app.ts`](src/chart/app.ts) does.
+import them from `@stocksharp/chart/ui`; [`src/chart/app.ts`](src/chart/app.ts)
+mounts every one of them through the same public options you get.
 
 ### Custom indicator painters
 

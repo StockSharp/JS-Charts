@@ -4,7 +4,13 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { ChartTypeSwitcher } = require('../src/chart/chart-type-switcher.js');
+const {
+    ChartType,
+    ChartTypeSwitcher,
+    allChartTypes,
+    defaultChartTypePalette,
+} = require('../src/chart/chart-type-switcher.js');
+const { standaloneHost } = require('../src/chart/chart-host.js');
 const {
     ExactVolumeProfileAccumulator,
     ExactVolumeProfileSeries,
@@ -27,6 +33,9 @@ function seriesMock() {
         updates: [],
         setData(data) { this.data = [...data]; },
         update(point) { this.updates.push(point); },
+        // The switcher carries the outgoing series' priceFormat onto the one it creates, so a
+        // stand-in has to answer for its options the way a real series does.
+        options() { return {}; },
     };
 }
 
@@ -68,10 +77,16 @@ describe('Heikin-Ashi live update', () => {
         ];
         const forming = { time: 300, open: 105, high: 110, low: 104, close: 109 };
 
-        const switcher = new ChartTypeSwitcher();
-        switcher.init(chartMock(), seriesMock(), seriesMock());
+        const switcher = new ChartTypeSwitcher({
+            chart: chartMock(),
+            series: seriesMock(),
+            initialType: ChartType.Candle,
+            availableTypes: allChartTypes,
+            palette: defaultChartTypePalette,
+            host: standaloneHost,
+        });
         switcher.setRawCandles([...closed, forming]);
-        const haSeries = switcher.switchType('heikin');
+        const haSeries = switcher.switchType(ChartType.HeikinAshi);
 
         // A live feed replaces the current bar on every tick: same time, new high/low/close.
         const ticks = [

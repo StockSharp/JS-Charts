@@ -54,6 +54,56 @@
         quantity: 1, orderType: 'limit', modifier: 'ctrl', title: 'ORDER', color: pal.accent,
     });
 
+    // ---- right-click menu ----------------------------------------------------
+    //
+    // The package menu places nothing itself: order placement is the page's, and this is what
+    // that looks like. Ctrl+click does the same thing through TradingOrderPlacementAdapter - the
+    // menu is the discoverable half of the same gesture.
+    var ui = SSChartUI.createChartUi(chart, {
+        container: Demo.el('chart'),
+        host: SSChartUI.standaloneHost,
+        priceSource: candles,
+        chartTypes: [],
+        storage: SSChartUI.localChartUiStorage('sschart:demo:trading'),
+        provideItems: function (ctx) {
+            if (ctx.price === null) return [];
+            var resting = layer.state().orders.filter(function (o) {
+                return Math.abs(o.price - ctx.price) < TICK * 2;
+            });
+            return [
+                [
+                    {
+                        key: 'buy',
+                        label: 'Buy limit @ ' + ctx.priceText,
+                        icon: 'bi bi-arrow-up-circle',
+                        tone: SSChartUI.ChartContextMenuTone.Positive,
+                        invoke: function () { layer.requestPlaceOrder({ side: 'buy', type: 'limit', price: ctx.price, quantity: 1 }); },
+                    },
+                    {
+                        key: 'sell',
+                        label: 'Sell limit @ ' + ctx.priceText,
+                        icon: 'bi bi-arrow-down-circle',
+                        tone: SSChartUI.ChartContextMenuTone.Negative,
+                        invoke: function () { layer.requestPlaceOrder({ side: 'sell', type: 'limit', price: ctx.price, quantity: 1 }); },
+                    },
+                ],
+                [{
+                    key: 'cancel',
+                    icon: 'bi bi-x-circle',
+                    label: resting.length === 1
+                        ? 'Cancel the order at ' + ctx.priceText
+                        : 'Cancel ' + resting.length + ' orders at ' + ctx.priceText,
+                    // Greyed out rather than hidden: a menu whose rows move between right-clicks
+                    // is one the reader has to re-read every time.
+                    disabled: resting.length === 0,
+                    invoke: function () { resting.forEach(function (o) { layer.requestCancelOrder(o.id); }); },
+                }],
+            ];
+        },
+    });
+
+    ui.setCandles(bars);
+
     // ---- side panel: orders / positions / log -------------------------------
     layer.subscribeChanges(renderState);
     renderState();

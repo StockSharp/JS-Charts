@@ -1,0 +1,1303 @@
+/* Looks for every element the @stocksharp/chart UI layer renders: the legend and
+ * its chart-type menu, the sub-pane headers, the right-click menu, the indicator
+ * picker and editor, the plain modal shell and the toast.
+ *
+ * The modules emit class names and nothing else. This file is the other half of
+ * that bargain, and shipping it is what lets those modules render on a page that
+ * is not the terminal they were extracted from.
+ *
+ * COLOURS AND METRICS ARE TOKENS. Every colour, font and animation duration below
+ * reads a `--chart-ui-*` custom property declared once in the `:root` block, and no
+ * rule carries a literal. Each default is `var(--t-<name>, <dark literal>)`: a page
+ * that already declares the workspace `--t-*` palette (the terminal, the demo) is
+ * themed automatically and follows its own light/dark switch, and a page that
+ * declares neither gets the dark values verbatim. To restyle, declare the
+ * `--chart-ui-*` names after this file is loaded; there is no need to override a
+ * single rule.
+ *
+ * WHAT A HOST MUST NOT RESTYLE. These declarations are behaviour, not decoration,
+ * and a module breaks without them:
+ *   .chart-legend, .chart-legend .legend-indicator, .legend-edit-btn,
+ *   .legend-remove-btn - `pointer-events`. The legend swallows the pointer so the
+ *     crosshair stops moving while the reader aims at a row's buttons.
+ *   .chart-panes-wrapper - `position: relative`. The legend is absolute against it.
+ *   .chart-ctx-menu, .chart-legend-floating-ct-menu - `position` and the offsets.
+ *     Both are placed in viewport coordinates by their module, from a measured
+ *     click, and both are appended to the fullscreen element when one is active.
+ *   .indicator-modal .indicator-list, .indicator-settings - `overflow` and
+ *     `min-height: 0`. Without them the picker grows instead of scrolling and the
+ *     dialog runs off the bottom of the screen.
+ *   .indicator-modal .indicator-editor-error[hidden] - the editor toggles `hidden`
+ *     to show and clear the message.
+ *   .chart-modal-open - the open state written by `createPlainModalController`.
+ *
+ * Load order matters in one direction only: a host that wants to override a rule
+ * (not just a token) must load its own stylesheet AFTER this one.
+ */
+
+:root {
+    /* Surfaces */
+    --chart-ui-surface: var(--t-panel, #181a20);
+    --chart-ui-header: var(--t-header, #12151c);
+    --chart-ui-field: var(--t-bg, #0b0e11);
+
+    /* Lifted off the surface rather than declared against it. A fixed dark value
+       here is a dark chip on a light page - which is exactly what happened on a
+       page that declared a palette but not this particular name. Mixing text into
+       surface lifts on a dark ground and settles on a light one, so a host that
+       sets two colours gets the third right for free; one that wants to say it
+       outright still can, through --t-surface. */
+    --chart-ui-surface-raised: var(--t-surface, color-mix(in srgb, var(--chart-ui-text) 8%, var(--chart-ui-surface)));
+
+    /* Lines. The two hairlines are the dividers between list rows, dimmer than a
+       border so a long list does not read as a grid. Derived from the border for
+       the reason above: a fixed one draws dark rules across a light list. */
+    --chart-ui-border: var(--t-border, #2b3139);
+    --chart-ui-hairline: color-mix(in srgb, var(--chart-ui-border) 30%, transparent);
+    --chart-ui-hairline-strong: color-mix(in srgb, var(--chart-ui-border) 45%, transparent);
+
+    /* Text */
+    --chart-ui-text: var(--t-text, #eaecef);
+    --chart-ui-text-dim: var(--t-text-dim, #848e9c);
+    --chart-ui-text-bright: var(--t-text-bright, #ffffff);
+    /* Text on a surface filled with a direction or accent colour. */
+    --chart-ui-on-fill: var(--t-on-direction, #ffffff);
+
+    /* Accent */
+    --chart-ui-hover: var(--t-hover, color-mix(in srgb, var(--chart-ui-text) 12%, var(--chart-ui-surface)));
+    --chart-ui-accent: var(--t-accent, #fcd535);
+    --chart-ui-accent-text: var(--t-accent-text, #0b0e11);
+    --chart-ui-accent-soft: var(--t-accent-glow-soft, rgba(252, 213, 53, 0.12));
+
+    /* Price direction - the legend's O/H/L/C and the toast's success state. */
+    --chart-ui-up: var(--t-green, #0ecb81);
+    --chart-ui-down: var(--t-red, #f6465d);
+    --chart-ui-down-soft: color-mix(in srgb, var(--chart-ui-down) 15%, transparent);
+    --chart-ui-down-wash: color-mix(in srgb, var(--chart-ui-down) 9%, transparent);
+    --chart-ui-down-edge: color-mix(in srgb, var(--chart-ui-down) 35%, transparent);
+    --chart-ui-down-glow: color-mix(in srgb, var(--chart-ui-down) 55%, transparent);
+
+    /* Order actions in the right-click menu. Deliberately not the direction
+       colours: these match the candle body the user just clicked on. */
+    --chart-ui-buy: #00c853;
+    --chart-ui-sell: #ff3d57;
+
+    --chart-ui-warning: #f5a623;
+    --chart-ui-warning-text: #1a1a1a;
+    --chart-ui-favorite: #f5b942;
+
+    --chart-ui-backdrop: rgba(0, 0, 0, 0.6);
+    --chart-ui-shadow: rgba(0, 0, 0, 0.4);
+    --chart-ui-shadow-strong: rgba(0, 0, 0, 0.45);
+
+    /* Type. The mono face carries the legend and every measured column, so it has
+       to cover Cyrillic - IBM Plex Mono does not, and a Russian label silently
+       falls back to sans-serif in the middle of a numeric row. */
+    --chart-ui-font: var(--t-font, 'DM Sans', -apple-system, sans-serif);
+    --chart-ui-mono: var(--t-mono, 'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', 'Consolas', 'Liberation Mono', monospace);
+    --chart-ui-transition: var(--t-transition, 180ms ease);
+
+    /* Where the legend sits inside the chart tile. The left inset clears a
+       vertical tool rail down the side of the chart; a page without one sets it
+       to the same value as the top inset. */
+    --chart-ui-legend-top: 6px;
+    --chart-ui-legend-left: 48px;
+}
+
+/* ========== SHARED ========== */
+
+/* A form control does not inherit the page font on its own, and this package
+   cannot assume the host ships a CSS reset. Everything else about these elements
+   is set by the rule that names them. */
+.chart-legend button,
+.chart-pane-header button,
+.chart-legend-floating-ct-menu button,
+.chart-ctx-menu button,
+.indicator-modal button,
+.indicator-modal input,
+.indicator-modal select {
+    font-family: inherit;
+}
+
+@keyframes chart-ui-toast-in {
+    from { opacity: 0; transform: translateY(10px) scale(0.95); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes chart-ui-toast-out {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to { opacity: 0; transform: translateY(-10px) scale(0.95); }
+}
+
+
+/* ========== BUTTONS ========== */
+
+/* The dialog's own buttons. It used to wear Bootstrap's `btn btn-sm`, and dropping
+   that left these class names with nothing behind them: a native <button> with the
+   browser's default border and background, which on a dark dialog reads as broken
+   rather than as plain. Everything a button needs is here, because a published
+   module cannot assume a CSS framework on the page it lands in. */
+.indicator-modal .indicator-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 4px;
+    background: var(--chart-ui-surface-raised);
+    color: var(--chart-ui-text);
+    font-size: 12px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: background var(--chart-ui-transition), border-color var(--chart-ui-transition);
+}
+
+.indicator-modal .indicator-btn:hover:not(:disabled) {
+    background: var(--chart-ui-hover);
+    border-color: var(--chart-ui-text-dim);
+}
+
+/* A button with nothing to act on keeps its place and stops reacting, rather than
+   disappearing and moving everything beside it. */
+.indicator-modal .indicator-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* The one that commits: adding the study, saving the edit. */
+.indicator-modal .indicator-btn-primary {
+    background: var(--chart-ui-accent);
+    border-color: var(--chart-ui-accent);
+    color: var(--chart-ui-accent-text);
+    font-weight: 500;
+}
+
+.indicator-modal .indicator-btn-primary:hover:not(:disabled) {
+    background: var(--chart-ui-accent);
+    border-color: var(--chart-ui-accent);
+    filter: brightness(1.08);
+}
+
+
+/* ========== SCROLLBARS ========== */
+
+/* Every scrolling box this layer renders: the indicator list, the category strip,
+   the editor pane, the menus. Left to the browser they are a wide grey trough that
+   belongs to no theme, and on a dark dialog that is the first thing a reader sees.
+   Scoped to this layer's own elements - a page's other scrollbars are the page's
+   business. */
+.chart-ctx-menu,
+.chart-legend-floating-ct-menu,
+.indicator-modal .indicator-list,
+.indicator-modal .indicator-category-tabs,
+.indicator-modal .indicator-settings,
+.indicator-modal .indicator-detail,
+.indicator-modal .active-indicators-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--chart-ui-border) transparent;
+}
+
+.chart-ctx-menu::-webkit-scrollbar,
+.chart-legend-floating-ct-menu::-webkit-scrollbar,
+.indicator-modal .indicator-list::-webkit-scrollbar,
+.indicator-modal .indicator-category-tabs::-webkit-scrollbar,
+.indicator-modal .indicator-settings::-webkit-scrollbar,
+.indicator-modal .indicator-detail::-webkit-scrollbar,
+.indicator-modal .active-indicators-list::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.chart-ctx-menu::-webkit-scrollbar-track,
+.chart-legend-floating-ct-menu::-webkit-scrollbar-track,
+.indicator-modal .indicator-list::-webkit-scrollbar-track,
+.indicator-modal .indicator-category-tabs::-webkit-scrollbar-track,
+.indicator-modal .indicator-settings::-webkit-scrollbar-track,
+.indicator-modal .indicator-detail::-webkit-scrollbar-track,
+.indicator-modal .active-indicators-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.chart-ctx-menu::-webkit-scrollbar-thumb,
+.chart-legend-floating-ct-menu::-webkit-scrollbar-thumb,
+.indicator-modal .indicator-list::-webkit-scrollbar-thumb,
+.indicator-modal .indicator-category-tabs::-webkit-scrollbar-thumb,
+.indicator-modal .indicator-settings::-webkit-scrollbar-thumb,
+.indicator-modal .indicator-detail::-webkit-scrollbar-thumb,
+.indicator-modal .active-indicators-list::-webkit-scrollbar-thumb {
+    background: var(--chart-ui-border);
+    border-radius: 2px;
+}
+
+.chart-ctx-menu::-webkit-scrollbar-thumb:hover,
+.chart-legend-floating-ct-menu::-webkit-scrollbar-thumb:hover,
+.indicator-modal .indicator-list::-webkit-scrollbar-thumb:hover,
+.indicator-modal .indicator-category-tabs::-webkit-scrollbar-thumb:hover,
+.indicator-modal .indicator-settings::-webkit-scrollbar-thumb:hover,
+.indicator-modal .indicator-detail::-webkit-scrollbar-thumb:hover,
+.indicator-modal .active-indicators-list::-webkit-scrollbar-thumb:hover {
+    background: var(--chart-ui-text-dim);
+}
+
+/* ========== PLAIN MODAL ========== */
+
+/* The shell `createPlainModalController` drives. A page with a modal library keeps
+   `chart-modal` off its dialog root and drives that root itself, so neither rule
+   here applies and nothing fights the library. */
+.chart-modal {
+    display: none;
+}
+
+.chart-modal.chart-modal-open {
+    position: fixed;
+    inset: 0;
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* The root is also the backdrop. The dialog closes on a mousedown whose target
+       is the root itself, which only resolves while the root covers the viewport. */
+    background: var(--chart-ui-backdrop);
+}
+
+/* ========== CHART LEGEND ========== */
+
+/* Absolute inside .chart-panes-wrapper, which begins below the toolbar, so the
+   legend sits a few pixels in from the top-left of the chart canvas. */
+.chart-legend {
+    position: absolute;
+    top: var(--chart-ui-legend-top);
+    left: var(--chart-ui-legend-left);
+    z-index: 10;
+    font-family: var(--chart-ui-mono);
+    font-size: 11px;
+    color: var(--chart-ui-text-dim);
+    /* One row per series: the candle's OHLCV, then each indicator under it.
+       align-items keeps a row as wide as its own text instead of the strip. */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    /* Take the pointer anywhere in the strip so the chart's crosshair-move stops
+       firing while the user reads a row. Every cursor pixel would otherwise
+       rewrite the indicator numbers, reflow the row, and walk the edit and remove
+       buttons out from under the cursor. The legend also clears the crosshair on
+       mouseenter so the vertical line goes with it. */
+    pointer-events: auto;
+    /* The wrapper's overflow clips horizontally, but a hard right boundary keeps
+       the legend from elbowing the price scale on a narrow tile. */
+    max-width: calc(100% - 16px);
+}
+
+.chart-legend .legend-item {
+    white-space: nowrap;
+}
+
+.chart-legend .legend-up { color: var(--chart-ui-up); }
+.chart-legend .legend-down { color: var(--chart-ui-down); }
+.chart-legend .legend-vol { color: var(--chart-ui-text-dim); }
+.chart-legend .legend-time { color: var(--chart-ui-text-dim); }
+
+.chart-legend .legend-indicators {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* The candle series is one row: time and O/H/L/C/V run inline with a gap between
+   them, so "22:14" and "O 0.49" do not collide. */
+.chart-legend .legend-ohlcv {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+}
+
+.chart-legend .legend-indicator {
+    white-space: nowrap;
+    /* The numbers rewrite on every crosshair-move. Without tabular figures and a
+       stable minimum width the row reflows pixel by pixel and its buttons walk
+       away from under the cursor. */
+    font-variant-numeric: tabular-nums;
+    align-items: center;
+    /* Take the pointer on the row itself so hovering it blocks the crosshair-move
+       underneath and the values hold still while the user aims at a button. */
+    pointer-events: auto;
+}
+
+.chart-legend .legend-value {
+    display: inline-block;
+    min-width: 56px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Name label in front of a multi-output value run (Ichimoku, MACD). Dim, so the
+   coloured numbers read first. */
+.chart-legend .legend-ind-name,
+.chart-pane-header .pane-ind-name {
+    color: var(--chart-ui-text-dim);
+    font-weight: 600;
+    margin-right: 4px;
+}
+
+.chart-legend .legend-edit-btn,
+.chart-legend .legend-remove-btn,
+.chart-pane-header .legend-edit-btn,
+.chart-pane-header .legend-remove-btn {
+    cursor: pointer;
+    color: var(--chart-ui-text-dim);
+    font-size: 11px;
+    margin-left: 2px;
+    padding: 0 4px;
+    border-radius: 3px;
+    opacity: 0.55;
+    transition: opacity var(--chart-ui-transition), background var(--chart-ui-transition), color var(--chart-ui-transition);
+    user-select: none;
+    pointer-events: auto;
+}
+
+.chart-legend .legend-edit-btn:hover,
+.chart-pane-header .legend-edit-btn:hover {
+    opacity: 1;
+    color: var(--chart-ui-accent);
+    background: var(--chart-ui-accent-soft);
+}
+
+.chart-legend .legend-remove-btn,
+.chart-pane-header .legend-remove-btn {
+    font-size: 13px;
+    line-height: 1;
+}
+
+.chart-legend .legend-remove-btn:hover,
+.chart-pane-header .legend-remove-btn:hover {
+    opacity: 1;
+    color: var(--chart-ui-down);
+    background: var(--chart-ui-down-soft);
+}
+
+/* ========== LEGEND CHART-TYPE MENU ========== */
+
+.chart-legend .legend-ct-toggle {
+    background: transparent;
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 3px;
+    color: var(--chart-ui-text-dim);
+    padding: 1px 6px;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.chart-legend .legend-ct-toggle:hover {
+    color: var(--chart-ui-text-bright);
+    background: var(--chart-ui-hover);
+}
+
+/* The menu is built on the body (or on the fullscreen element) rather than inside
+   the legend, because the legend's markup is rebuilt on every tick and a menu
+   inside it would be dropped from the DOM as soon as it opened. Its position,
+   z-index and min-width are written inline from the toggle's measured box. */
+.chart-legend-floating-ct-menu {
+    font-family: var(--chart-ui-font);
+    min-width: 130px;
+    padding: 4px 0;
+    background: var(--chart-ui-surface);
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 3px;
+    box-shadow: 0 12px 30px var(--chart-ui-shadow-strong);
+    font-family: var(--chart-ui-mono);
+}
+
+.chart-legend-floating-ct-menu .legend-ct-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 4px 12px;
+    border: 0;
+    background: transparent;
+    color: var(--chart-ui-text);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.chart-legend-floating-ct-menu .legend-ct-item:hover {
+    background: var(--chart-ui-hover);
+    color: var(--chart-ui-text-bright);
+}
+
+.chart-legend-floating-ct-menu .legend-ct-item i {
+    margin-right: 6px;
+    color: var(--chart-ui-text-dim);
+}
+
+/* ========== CHART SUB-PANES ========== */
+
+.chart-panes-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    /* Anchors the legend, so it follows the primary chart's tile in a multi-chart
+       layout and is clipped here instead of overflowing the neighbouring tile. */
+    position: relative;
+}
+
+.chart-sub-pane {
+    position: relative;
+}
+
+.chart-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1px 8px;
+    background: var(--chart-ui-header);
+    border-bottom: 1px solid var(--chart-ui-border);
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.chart-pane-header .pane-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--chart-ui-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+/* Live values for the indicators drawn on this sub-pane, repainted on every tick.
+   Grows in the middle of the header: label on the left, buttons on the right. */
+.chart-pane-header .pane-values {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--chart-ui-mono);
+    font-size: 10px;
+    color: var(--chart-ui-text-dim);
+    margin-left: 10px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chart-pane-header .pane-values .pane-value {
+    margin-right: 10px;
+}
+
+/* ========== CHART CONTEXT MENU ========== */
+
+/* Placed at the cursor in viewport coordinates and clamped inside it, so the
+   position is fixed and the offsets are written inline. */
+.chart-ctx-menu {
+    /* Stated, not inherited. A page sets its own body font — several of ours are monospace — and
+       a menu of prose in a monospace face reads as an unstyled one. Numbers inherit `mono` where
+       they belong: the legend, the pane headers, the value cells. */
+    font-family: var(--chart-ui-font);
+    position: fixed;
+    z-index: 10001;
+    min-width: 200px;
+    background: var(--chart-ui-surface);
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px var(--chart-ui-shadow);
+    padding: 4px 0;
+    font-size: 12px;
+    user-select: none;
+}
+
+.chart-ctx-item {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    color: var(--chart-ui-text);
+    padding: 6px 12px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
+}
+
+.chart-ctx-item:hover:not(:disabled) {
+    background: var(--chart-ui-hover);
+}
+
+/* An entry the host did not wire, or one with nothing to act on - a price the
+   chart could not resolve, a level with no resting orders. */
+.chart-ctx-icon {
+    display: inline-block;
+    width: 1.1em;
+    flex: 0 0 1.1em;
+    margin-right: 8px;
+    text-align: center;
+    font-style: normal;
+    opacity: 0.75;
+}
+
+.chart-ctx-item:disabled {
+    color: var(--chart-ui-text-dim);
+    cursor: default;
+}
+
+.chart-ctx-buy:not(:disabled) { color: var(--chart-ui-buy); }
+.chart-ctx-sell:not(:disabled) { color: var(--chart-ui-sell); }
+
+.chart-ctx-sep {
+    height: 1px;
+    background: var(--chart-ui-border);
+    margin: 4px 0;
+}
+
+/* ========== INDICATOR DIALOG ========== */
+
+/* The dialog is moved into the fullscreen element when one is active, so the
+   browser's top layer keeps it visible over a fullscreen chart and no z-index
+   override is needed here. */
+.indicator-modal .modal-dialog {
+    max-width: 1120px;
+}
+
+/* The dialog states its own face for the same reason the menu does: it is a page of labels,
+   descriptions and buttons, and it should not change shape with the page it is dropped into. The
+   numeric cells inside it keep `mono` through their own rules. */
+.indicator-modal {
+    font-family: var(--chart-ui-font);
+}
+
+.indicator-modal .modal-content {
+    background: var(--chart-ui-surface);
+    border: 1px solid var(--chart-ui-border);
+    color: var(--chart-ui-text);
+}
+
+.indicator-modal .modal-header {
+    background: var(--chart-ui-header);
+    border-bottom: 1px solid var(--chart-ui-border);
+    padding: 10px 16px;
+}
+
+.indicator-modal .modal-header .modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--chart-ui-text-bright);
+}
+
+.indicator-modal .modal-header .btn-close {
+    filter: invert(0.7);
+}
+
+.indicator-modal .modal-body {
+    padding: 0;
+    display: flex;
+    height: min(640px, 75vh);
+}
+
+/* ---- picker ---- */
+
+.indicator-modal .indicator-sidebar {
+    width: 300px;
+    border-right: 1px solid var(--chart-ui-border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.indicator-modal .indicator-search-input {
+    background: var(--chart-ui-field);
+    border: none;
+    border-bottom: 1px solid var(--chart-ui-border);
+    color: var(--chart-ui-text);
+    padding: 8px 12px;
+    font-size: 12px;
+    font-family: var(--chart-ui-font);
+    outline: none;
+}
+
+.indicator-modal .indicator-search-input:focus {
+    box-shadow: inset 0 -2px 0 var(--chart-ui-accent);
+}
+
+/* The tabs are built from the catalog's groups plus All and Favourites, so the
+   strip scrolls rather than dividing a fixed width between a known set. */
+.indicator-modal .indicator-category-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--chart-ui-border);
+    background: var(--chart-ui-header);
+}
+
+.indicator-modal .indicator-category-tab {
+    flex: 0 0 auto;
+    padding: 5px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    text-align: center;
+    color: var(--chart-ui-text-dim);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: all var(--chart-ui-transition);
+}
+
+.indicator-modal .indicator-category-tab:hover {
+    color: var(--chart-ui-text);
+}
+
+.indicator-modal .indicator-category-tab.active {
+    color: var(--chart-ui-accent);
+    border-bottom-color: var(--chart-ui-accent);
+}
+
+.indicator-modal .indicator-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* A row is two buttons side by side - pick the indicator, or star it - so the row
+   itself carries the hover and the divider and neither button owns the whole
+   width. */
+.indicator-modal .indicator-list-item {
+    display: flex;
+    align-items: center;
+    transition: background var(--chart-ui-transition);
+    border-bottom: 1px solid var(--chart-ui-hairline);
+    background: transparent;
+    width: 100%;
+}
+
+.indicator-modal .indicator-list-item:hover {
+    background: var(--chart-ui-hover);
+}
+
+.indicator-modal .indicator-list-select {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px 8px 4px;
+    cursor: pointer;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+}
+
+.indicator-modal .indicator-list-select:focus-visible,
+.indicator-modal .indicator-favorite-toggle:focus-visible {
+    outline: 1px solid var(--chart-ui-accent);
+    outline-offset: -2px;
+}
+
+.indicator-modal .indicator-favorite-toggle {
+    align-self: stretch;
+    flex: 0 0 32px;
+    border: 0;
+    background: transparent;
+    color: var(--chart-ui-text-dim);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+}
+
+.indicator-modal .indicator-favorite-toggle:hover,
+.indicator-modal .indicator-favorite-toggle.is-favorite {
+    color: var(--chart-ui-favorite);
+}
+
+.indicator-modal .indicator-list-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.indicator-modal .indicator-list-name {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--chart-ui-text-bright);
+}
+
+.indicator-modal .indicator-list-fullname {
+    font-size: 10px;
+    color: var(--chart-ui-text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.indicator-modal .indicator-list-group {
+    flex: 0 0 auto;
+    font-size: 9px;
+    background: var(--chart-ui-surface-raised);
+    padding: 1px 6px;
+    border-radius: 2px;
+    color: var(--chart-ui-text-dim);
+}
+
+.indicator-modal .indicator-list-empty {
+    padding: 24px 12px;
+    color: var(--chart-ui-text-dim);
+    font-size: 11px;
+    text-align: center;
+}
+
+/* ---- detail pane ---- */
+
+.indicator-modal .indicator-detail {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.indicator-modal .indicator-settings {
+    padding: 16px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.indicator-modal .indicator-settings-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--chart-ui-text-bright);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.indicator-modal .indicator-editor-id,
+.indicator-modal .indicator-effective-scale {
+    color: var(--chart-ui-text-dim);
+    font-family: var(--chart-ui-mono);
+    font-size: 9px;
+    font-weight: 400;
+}
+
+.indicator-modal .indicator-editor-empty {
+    color: var(--chart-ui-text-dim);
+    font-size: 11px;
+    padding: 18px 0;
+    text-align: center;
+}
+
+.indicator-modal .indicator-settings-params {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.indicator-modal .indicator-param-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.indicator-modal .indicator-param-label {
+    font-size: 11px;
+    color: var(--chart-ui-text-dim);
+    width: 80px;
+    flex-shrink: 0;
+}
+
+/* ---- editor sections ---- */
+
+.indicator-modal .indicator-editor-section {
+    border-top: 1px solid var(--chart-ui-border);
+    padding: 12px 0;
+}
+
+.indicator-modal .indicator-section-title {
+    color: var(--chart-ui-text-bright);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+}
+
+/* Every field the editor renders.
+ *
+ * `appearance: none` is the load-bearing line, not the colours under it: a form
+ * control follows the browser's own colour scheme, so it paints its light box over
+ * whatever background an author sets. That is exactly how these came out light on a
+ * dark dialog while their computed background said they were not. */
+.indicator-modal .indicator-param-input,
+.indicator-modal .indicator-editor-select,
+.indicator-modal .indicator-output-row input[type="number"],
+.indicator-modal .indicator-output-row input[type="text"],
+.indicator-modal .indicator-output-row select {
+    appearance: none;
+    background: var(--chart-ui-field);
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 3px;
+    color: var(--chart-ui-text-bright);
+    font-family: var(--chart-ui-mono);
+    font-size: 10px;
+    min-height: 26px;
+    outline: none;
+    padding: 3px 6px;
+}
+
+/* A parameter field sits in the form above, not in the tight style rows, so it is
+   set a size larger. The box it wore came from Bootstrap's `form-control`; when that
+   went, only the colours were left behind. */
+.indicator-modal .indicator-param-input {
+    font-size: 12px;
+    padding: 4px 8px;
+    max-width: 100px;
+}
+
+.indicator-modal .indicator-param-input:focus {
+    border-color: var(--chart-ui-accent);
+}
+
+/* A tick box keeps the browser's own square - it is too small to redraw well - and
+   takes only the accent, so a ticked one is the dialog's colour and not the UA's. */
+.indicator-modal .indicator-param-input[type="checkbox"] {
+    appearance: auto;
+    accent-color: var(--chart-ui-accent);
+    border: none;
+    min-height: 0;
+    padding: 0;
+    max-width: none;
+    width: auto;
+}
+
+/* `appearance: none` takes the caret with it, so a select draws its own: two gradient
+   wedges in the text colour, which costs a host no file to serve. The list it drops
+   down stays the operating system's and follows the page's own `color-scheme`. */
+.indicator-modal .indicator-editor-select,
+.indicator-modal .indicator-output-row select {
+    padding-right: 22px;
+    background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+        linear-gradient(135deg, currentColor 50%, transparent 50%);
+    background-position: right 11px top 53%, right 7px top 53%;
+    background-size: 4px 4px, 4px 4px;
+    background-repeat: no-repeat;
+}
+
+.indicator-modal .indicator-editor-select {
+    flex: 1;
+    max-width: 280px;
+}
+
+.indicator-modal .indicator-param-row-wide .indicator-editor-select {
+    max-width: none;
+}
+
+.indicator-modal .indicator-editor-select:focus,
+.indicator-modal .indicator-output-row input:focus,
+.indicator-modal .indicator-output-row select:focus {
+    border-color: var(--chart-ui-accent);
+}
+
+.indicator-modal .indicator-toggle-row {
+    align-items: center;
+    color: var(--chart-ui-text);
+    cursor: pointer;
+    display: flex;
+    font-size: 11px;
+    gap: 7px;
+    min-height: 26px;
+}
+
+.indicator-modal .indicator-toggle-row input,
+.indicator-modal .indicator-output-visible {
+    accent-color: var(--chart-ui-accent);
+}
+
+/* The source an indicator reads is gone, or the last save was refused. */
+.indicator-modal .indicator-source-warning,
+.indicator-modal .indicator-editor-error {
+    background: var(--chart-ui-down-wash);
+    border: 1px solid var(--chart-ui-down-edge);
+    border-radius: 3px;
+    color: var(--chart-ui-down);
+    font-size: 10px;
+    margin: 6px 0;
+    padding: 6px 8px;
+}
+
+.indicator-modal .indicator-editor-error[hidden] {
+    display: none;
+}
+
+/* ---- output style rows ---- */
+
+.indicator-modal .indicator-output-header,
+.indicator-modal .indicator-output-row {
+    align-items: center;
+    display: grid;
+    gap: 7px;
+    grid-template-columns: minmax(100px, 1fr) minmax(145px, 1.25fr) 66px 105px 72px;
+}
+
+.indicator-modal .indicator-output-header {
+    color: var(--chart-ui-text-dim);
+    font-size: 9px;
+    padding: 0 4px 5px;
+    text-transform: uppercase;
+}
+
+.indicator-modal .indicator-output-row {
+    border-top: 1px solid var(--chart-ui-hairline-strong);
+    min-height: 36px;
+    padding: 5px 4px;
+}
+
+.indicator-modal .indicator-output-name {
+    align-items: center;
+    color: var(--chart-ui-text-bright);
+    display: flex;
+    font-size: 10px;
+    gap: 6px;
+    min-width: 0;
+}
+
+.indicator-modal .indicator-output-name span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Swatch plus the same colour as text, so a value can be pasted in as well as
+   picked. */
+.indicator-modal .indicator-color-editor {
+    align-items: center;
+    display: grid;
+    gap: 4px;
+    grid-template-columns: 26px 1fr;
+    min-width: 0;
+}
+
+.indicator-modal .indicator-output-color-picker {
+    background: transparent;
+    border: 0;
+    height: 24px;
+    padding: 0;
+    width: 26px;
+}
+
+.indicator-modal .indicator-output-color,
+.indicator-modal .indicator-output-width,
+.indicator-modal .indicator-output-line-style,
+.indicator-modal .indicator-output-precision {
+    min-width: 0;
+    width: 100%;
+}
+
+/* ---- templates ---- */
+
+.indicator-modal .indicator-template-existing,
+.indicator-modal .indicator-template-create {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+}
+
+.indicator-modal .indicator-template-create {
+    margin-top: 7px;
+}
+
+.indicator-modal .indicator-template-select {
+    max-width: none;
+    min-width: 0;
+}
+
+.indicator-modal .indicator-template-name {
+    background: var(--chart-ui-field);
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 3px;
+    color: var(--chart-ui-text-bright);
+    flex: 1;
+    font-family: var(--chart-ui-mono);
+    font-size: 10px;
+    min-height: 28px;
+    min-width: 0;
+    outline: none;
+    padding: 4px 7px;
+}
+
+.indicator-modal .indicator-template-name:focus {
+    border-color: var(--chart-ui-accent);
+}
+
+.indicator-modal .indicator-template-existing .btn,
+.indicator-modal .indicator-template-create .btn {
+    border: 1px solid var(--chart-ui-border);
+    color: var(--chart-ui-text);
+    font-size: 10px;
+    min-height: 28px;
+    white-space: nowrap;
+}
+
+.indicator-modal .indicator-template-existing .btn:disabled {
+    cursor: default;
+    opacity: .4;
+}
+
+.indicator-modal .indicator-template-note {
+    color: var(--chart-ui-text-dim);
+    font-size: 9px;
+    line-height: 1.4;
+    margin-top: 7px;
+}
+
+/* ---- commit ---- */
+
+.indicator-modal .indicator-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 8px;
+}
+
+.indicator-modal .indicator-save-btn,
+.indicator-modal .indicator-add-btn {
+    background: var(--chart-ui-accent);
+    border: 1px solid var(--chart-ui-accent);
+    border-radius: 3px;
+    color: var(--chart-ui-accent-text);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 6px 14px;
+}
+
+.indicator-modal .indicator-add-btn {
+    margin-top: 8px;
+}
+
+/* ---- active indicators ---- */
+
+.indicator-modal .active-indicators-panel {
+    border-top: 1px solid var(--chart-ui-border);
+    padding: 8px 16px;
+    background: var(--chart-ui-header);
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.indicator-modal .active-indicators-panel .panel-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--chart-ui-text-dim);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.active-indicator-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.active-indicator-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.indicator-modal .active-indicator-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 0;
+    font-size: 11px;
+}
+
+.indicator-modal .active-indicator-visible,
+.indicator-modal .active-indicator-name {
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+}
+
+.indicator-modal .active-indicator-visible {
+    color: var(--chart-ui-text-dim);
+    font-size: 12px;
+    padding: 2px 5px 2px 0;
+}
+
+.indicator-modal .active-indicator-visible.is-visible {
+    color: var(--chart-ui-accent);
+}
+
+.indicator-modal .active-indicator-name {
+    align-items: flex-start;
+    color: var(--chart-ui-text);
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    font-size: 10px;
+    min-width: 0;
+    padding: 2px 4px;
+    text-align: left;
+}
+
+.indicator-modal .active-indicator-name span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.indicator-modal .active-indicator-name small {
+    color: var(--chart-ui-text-dim);
+    font-size: 8px;
+}
+
+.indicator-modal .active-indicator-remove {
+    padding: 2px 7px;
+    font-size: 13px;
+    line-height: 1;
+    border-color: transparent;
+    background: transparent;
+    color: var(--chart-ui-text-dim);
+}
+
+/* Red on the way to being pressed, not at rest: a row of studies is not a row of
+   warnings, and a permanent red box beside each one says otherwise. */
+.indicator-modal .active-indicator-remove:hover:not(:disabled) {
+    background: var(--chart-ui-down-soft);
+    border-color: var(--chart-ui-down);
+    color: var(--chart-ui-down);
+}
+
+.indicator-modal .no-indicators {
+    color: var(--chart-ui-text-dim);
+    font-size: 11px;
+    font-style: italic;
+}
+
+/* ========== TOAST ========== */
+
+.terminal-toast {
+    position: fixed;
+    bottom: 40px;
+    right: 16px;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 9999;
+    animation: chart-ui-toast-in 0.25s ease;
+    font-family: var(--chart-ui-font);
+    box-shadow: 0 4px 20px var(--chart-ui-shadow);
+}
+
+.terminal-toast.success {
+    background: var(--chart-ui-up);
+    color: var(--chart-ui-on-fill);
+}
+
+/* Wider, bolder and edged, because an error is the one message that must not be
+   read as another filled rectangle in the corner. It also carries a close button
+   and does not dismiss itself. */
+.terminal-toast.error {
+    background: var(--chart-ui-down);
+    color: var(--chart-ui-on-fill);
+    max-width: 560px;
+    padding: 12px 16px 12px 22px;
+    font-weight: 600;
+    box-shadow: 0 6px 24px var(--chart-ui-down-glow);
+    border-left: 4px solid var(--chart-ui-on-fill);
+}
+
+.terminal-toast.warning {
+    background: var(--chart-ui-warning);
+    color: var(--chart-ui-warning-text);
+    font-weight: 600;
+}
+
+.terminal-toast.info {
+    background: var(--chart-ui-accent);
+    color: var(--chart-ui-accent-text);
+}
+
+.terminal-toast-msg {
+    margin-right: 12px;
+}
+
+.terminal-toast-close {
+    display: inline-block;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    line-height: 1;
+    padding: 0 4px;
+    opacity: 0.75;
+    transition: opacity var(--chart-ui-transition);
+}
+
+.terminal-toast-close:hover {
+    opacity: 1;
+}
+
+.terminal-toast.hiding {
+    animation: chart-ui-toast-out 0.2s ease forwards;
+}
+
+/* ========== NARROW SCREENS ========== */
+
+/* The picker stacks: the sidebar becomes the top half and the detail pane sits
+   under it, both with room for a label and its input. */
+@media (max-width: 640px) {
+    .indicator-modal .modal-dialog {
+        margin: 0;
+        max-width: 100%;
+        height: 100vh;
+    }
+
+    .indicator-modal .modal-content {
+        height: 100vh;
+        border: none;
+        border-radius: 0;
+    }
+
+    .indicator-modal .modal-body {
+        flex-direction: column;
+        height: calc(100vh - 48px);
+    }
+
+    .indicator-modal .indicator-sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--chart-ui-border);
+        flex: 1 1 50%;
+        min-height: 0;
+    }
+
+    .indicator-modal .indicator-detail {
+        flex: 1 1 50%;
+        min-height: 0;
+        overflow-y: auto;
+    }
+
+    .indicator-modal .indicator-param-input {
+        max-width: none;
+        flex: 1;
+    }
+}
+
+/* Five style columns do not fit. Drop the header row and keep the two that carry
+   the choice - the output's name and its colour. */
+@media (max-width: 860px) {
+    .indicator-modal .indicator-output-header {
+        display: none;
+    }
+
+    .indicator-modal .indicator-output-row {
+        grid-template-columns: minmax(105px, 1fr) minmax(135px, 1.2fr);
+    }
+}
