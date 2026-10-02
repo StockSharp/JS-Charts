@@ -55,6 +55,21 @@ describe('RenderScheduler', () => {
         assert.deepEqual(rendered, [RenderDirty.Base, RenderDirty.Axes]);
     });
 
+    // What resize() needs: it has just wiped the canvases and cannot leave the repaint to a later frame.
+    it('renders pending work at once and drops the frame it had queued', () => {
+        const frames = frameDriver();
+        const rendered = [];
+        const scheduler = new RenderScheduler((dirty) => rendered.push(dirty), frames);
+
+        scheduler.invalidate(RenderDirty.Base);
+        scheduler.invalidate(RenderDirty.Layout);
+        scheduler.flushNow();
+
+        assert.deepEqual(rendered, [RenderDirty.Base | RenderDirty.Layout]);
+        assert.equal(frames.size, 0);
+        assert.equal(scheduler.pendingDirty, RenderDirty.None);
+    });
+
     it('cancels pending work on dispose', () => {
         const frames = frameDriver();
         let renders = 0;

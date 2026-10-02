@@ -1961,8 +1961,13 @@ class ChartImpl implements IChartApi {
     resize(width: number, height: number): void {
         this.assertAlive();
         if (width < 2 || height < 2) return;
+        // Writing a canvas's size wipes it even when the value is unchanged.
+        if (width === this.width && height === this.height && (window.devicePixelRatio || 1) === this.dpr) return;
         this.applySize(width, height);
         this.scheduleDraw(RenderDirty.Layout);
+        // The canvases are blank now. A ResizeObserver callback runs after this frame's animation callbacks,
+        // so a draw left to the next frame would let the browser show the blank canvas first.
+        this.renderScheduler.flushNow();
     }
     remove(): void {
         if (this.disposed) return;

@@ -48,6 +48,13 @@ export class RenderScheduler implements IDisposable {
         this.frame = this.frames.request(() => this.flush());
     }
 
+    /** Renders what is pending now rather than on the queued frame, which is then dropped. */
+    flushNow(): void {
+        if (this.disposed) return;
+        if (this.frame !== null) this.frames.cancel(this.frame);
+        this.flush();
+    }
+
     private flush(): void {
         if (this.disposed) return;
         this.frame = null;
