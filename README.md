@@ -98,6 +98,34 @@ The stylesheet is required — those modules emit class names and nothing else.
 Every colour in it is a `--chart-ui-*` custom property with a dark default, so a
 page restyles by declaring the tokens rather than by overriding rules.
 
+#### Trades on the candles
+
+`TradeMarks` marks executed trades on a candle series: a mark for each side of
+every bar a trade fell in, buys under the bar and sells over it, and the list of a
+mark's trades beside the pointer. The legend counts them, and names the chart and
+the lines a page draws itself:
+
+```ts
+import { createSeriesMarkers } from '@stocksharp/chart';
+import { TradeMarks } from '@stocksharp/chart/ui';
+
+const marks = new TradeMarks({
+  chart, series: candles, markers: createSeriesMarkers(candles),
+  container: chartElement,              // the trade list opens in it
+  host: standaloneHost,
+  colors: { buy: '#3b9cff', sell: '#ff9f43', unknown: '#8a8a8a' },
+});
+marks.setTrades([{ time: 1709316000, side: 'buy', price: 62022.3, volume: 0.414 }]);
+
+legend.setTitle('BTCUSDT@BNB');
+legend.setLines([{ name: 'Equity', color: '#c084fc', valueAt: (time) => equity.get(time) }]);
+legend.setTradeMarks(marks);
+```
+
+A page that needs the legend and the trade marks and nothing else - a backtest
+report, say - imports them from `@stocksharp/chart/legend`. `./ui` brings the
+indicator dialog with it, and with the dialog the whole indicator catalogue.
+
 ## What's here
 
 ```

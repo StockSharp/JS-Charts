@@ -2,7 +2,9 @@
 export { createChartUi, inMemoryChartUiStorage, localChartUiStorage, } from './chart-ui.js';
 export type { ChartUi, ChartUiChart, ChartUiOptions, ChartUiStorage, } from './chart-ui.js';
 export { ChartLegend, fullscreenMenuLayer, } from './chart-legend.js';
-export type { ChartLegendOptions, LegendBar, LegendChart, LegendChartType, LegendCrosshairParam, LegendIndicatorEngine, LegendIndicatorValue, LegendMenuLayer, LegendPaneHost, LegendSeriesData, } from './chart-legend.js';
+export type { ChartLegendOptions, LegendBar, LegendChart, LegendChartType, LegendCrosshairParam, LegendIndicatorEngine, LegendIndicatorValue, LegendLine, LegendMenuLayer, LegendPaneHost, LegendSeriesData, LegendTradeMarks, } from './chart-legend.js';
+export { TradeMarks, barOf, describeTrade, groupTradesByBar, tradeMarkers, } from './trade-marks.js';
+export type { ChartTrade, TradeMarkColors, TradeMarkCounts, TradeMarksBar, TradeMarksChart, TradeMarksCrosshairParam, TradeMarksOptions, TradeMarksPlugin, TradeMarksSeries, } from './trade-marks.js';
 export { ChartContextMenu, ChartContextMenuMode, ChartContextMenuTone, } from './chart-context-menu.js';
 export type { ChartContextMenuChartOptions, ChartContextMenuContext, ChartContextMenuEntry, ChartContextMenuModeValue, ChartContextMenuOptions, ChartContextMenuPaneOptions, ChartContextMenuProvider, ChartContextMenuToneValue, PriceCoordinateSource, } from './chart-context-menu.js';
 export { ChartType, ChartTypeSwitcher, allChartTypes, defaultChartTypePalette, isDerivedChartType, parseChartType, } from './chart-type-switcher.js';
@@ -155,6 +157,29 @@ export interface LegendIndicatorValue {
     /** null = overlay on the main chart; anything else names the sub-pane it lives in. */
     paneId: string | null;
 }
+/**
+ * A line the page draws itself and the legend names beside the candle: its value at the bar under the pointer, in its
+ * own colour. It is no study of the indicator engine, so its row carries no edit or remove button.
+ */
+export interface LegendLine {
+    name: string;
+    color: string;
+    /** The value at the bar that opens at `time`, or undefined where the line has none. */
+    valueAt(time: number): number | undefined;
+}
+/** The trades marked on the chart, as the legend counts them; `TradeMarks` is one. */
+export interface LegendTradeMarks {
+    counts(): {
+        buy: number;
+        sell: number;
+        unknown: number;
+    };
+    colors(): {
+        buy: string;
+        sell: string;
+        unknown: string;
+    };
+}
 /** The slice of the indicator engine the legend talks to — same structural reasoning as LegendChart. */
 export interface LegendIndicatorEngine {
     onChange: (() => void) | null;
@@ -220,6 +245,10 @@ export declare class ChartLegend {
     _rawCandles: readonly LegendBar[];
     _hasVolume: boolean;
     _indicatorEngine: LegendIndicatorEngine | null;
+    _title: string;
+    _lines: readonly LegendLine[];
+    _lastLinesSignature: string | null;
+    _tradeMarks: LegendTradeMarks | null;
     _isHovered: boolean;
     _isDisposed: boolean;
     _onMouseEnter: (() => void) | null;
@@ -254,11 +283,24 @@ export declare class ChartLegend {
     setChartType(type: string): void;
     /** Hands the legend the bars behind the chart — the source it reads a hovered candle from. */
     setRawCandles(candles: readonly LegendBar[] | null | undefined): void;
+    /** Names what the chart shows, ahead of the candle's prices: its instrument, say. An empty title names nothing. */
+    setTitle(title: string): void;
+    /** Hands the legend the lines it names beside the candle, in the order they are listed. */
+    setLines(lines: readonly LegendLine[]): void;
+    /**
+     * Counts the trades marked on the chart in the strip, each side in the colour of its marks; null counts none.
+     * Marks that were handed other trades are counted again on the next paint, or at once by `refresh()`.
+     */
+    setTradeMarks(marks: LegendTradeMarks | null): void;
     /** Points the legend at the indicator engine whose values it prints. */
     setIndicatorEngine(engine: LegendIndicatorEngine | null): void;
     refresh(): void;
     _onCrosshairMove(param: LegendCrosshairParam): void;
     _renderOHLCV(candle: LegendBar): void;
+    /** The trades marked on the chart, one count for each side that has any, in the colour of its marks. */
+    _paintTrades(el: HTMLElement): void;
+    /** The page's own lines at the bar: a row of "name value" in each line's colour, built once per set of lines. */
+    _renderLines(time: number | null | undefined): void;
     /**
      * The icon for the rendering on screen. A type the page never listed — set from a toolbar that
      * offers more than the menu does — wears the first entry's icon rather than no icon at all.
@@ -1103,6 +1145,116 @@ export interface IndicatorPaneHost {
     getChart(paneId: string): IndicatorPaneChart | null;
     removePane(paneId: string): void;
     restorePane?(paneId: string): string | null;
+}
+
+// Public API module: chart/trade-marks.d.ts
+import type { ChartUiHost } from './chart-host.js';
+import type { SeriesMarker } from '../core/chart-api.js';
+import type { TradingSide } from '../trading/model.js';
+/** A trade as the marks read it. */
+export interface ChartTrade {
+    /** When it happened, UNIX seconds. */
+    time: number;
+    /** Its side; null when nothing says which. */
+    side: TradingSide | null;
+    price: number;
+    volume: number;
+}
+/** The colours of the marks: one for each side and one for a trade of no known side. */
+export interface TradeMarkColors {
+    buy: string;
+    sell: string;
+    unknown: string;
+}
+/** How many of the marked trades are of each side. */
+export interface TradeMarkCounts {
+    buy: number;
+    sell: number;
+    unknown: number;
+}
+/** A bar as the marks read it: when it opens, and how far it reaches, which is where its marks sit. */
+export interface TradeMarksBar {
+    time: number;
+    high?: number;
+    low?: number;
+}
+/** The crosshair payload, reduced to what the marks read. */
+export interface TradeMarksCrosshairParam {
+    time?: number | null;
+    point?: {
+        x: number;
+        y: number;
+    } | null;
+}
+/** The chart, described structurally as the legend describes it. */
+export interface TradeMarksChart {
+    subscribeCrosshairMove(handler: (param: TradeMarksCrosshairParam) => void): void;
+    unsubscribeCrosshairMove(handler: (param: TradeMarksCrosshairParam) => void): void;
+}
+/** The candle series the trades are marked on. */
+export interface TradeMarksSeries {
+    data(): readonly TradeMarksBar[];
+    priceToCoordinate(price: number): number | null;
+}
+/** Where the marks are drawn: the series' markers, as `createSeriesMarkers(series)` returns them. */
+export interface TradeMarksPlugin {
+    setMarkers(markers: SeriesMarker[]): void;
+}
+export interface TradeMarksOptions {
+    chart: TradeMarksChart;
+    series: TradeMarksSeries;
+    markers: TradeMarksPlugin;
+    /** The element the list of a mark's trades opens in. It sits over the chart and positions its children. */
+    container: HTMLElement;
+    /** Words the sides and formats the numbers of the marks and of the list. */
+    host: ChartUiHost;
+    colors: TradeMarkColors;
+}
+/** The bar a moment falls in: the last of the sorted bar times that is not after it; undefined before the first. */
+export declare function barOf(time: number, barTimes: readonly number[]): number | undefined;
+/** The trades of each bar, keyed by the time the bar opened. A trade before the first bar has no bar to be marked on. */
+export declare function groupTradesByBar(trades: readonly ChartTrade[], barTimes: readonly number[]): Map<number, ChartTrade[]>;
+/**
+ * One mark per side of a bar: the buys under it, the sells over it, the trades of no known side on it. A mark for a
+ * single trade says its price, a mark for several how many there are.
+ */
+export declare function tradeMarkers(groups: ReadonlyMap<number, readonly ChartTrade[]>, colors: TradeMarkColors, price: (value: number) => string): SeriesMarker[];
+/** What the list says of a trade: its side, size, price and time, worded and formatted by the host. */
+export declare function describeTrade(trade: ChartTrade, host: ChartUiHost): string;
+/**
+ * Trades marked on a candle series, and the list of a mark's trades under the pointer.
+ *
+ * The page hands over the trades; the bars are read from the series as it stands when they are handed over, so a
+ * page that replaces the series' data hands the trades over again.
+ */
+export declare class TradeMarks {
+    readonly _chart: TradeMarksChart;
+    readonly _series: TradeMarksSeries;
+    readonly _markers: TradeMarksPlugin;
+    readonly _container: HTMLElement;
+    readonly _host: ChartUiHost;
+    _colors: TradeMarkColors;
+    _groups: Map<number, ChartTrade[]>;
+    _counts: TradeMarkCounts;
+    _bars: Map<number, TradeMarksBar>;
+    _tip: HTMLElement | null;
+    _onCrosshair: ((param: TradeMarksCrosshairParam) => void) | null;
+    constructor(options: TradeMarksOptions);
+    /** Marks the trades on the bars the series holds now. */
+    setTrades(trades: readonly ChartTrade[]): void;
+    /** Repaints the marks in other colours: the page's theme changed. */
+    setColors(colors: TradeMarkColors): void;
+    /** The colours the marks are drawn in. */
+    colors(): TradeMarkColors;
+    /** How many of the marked trades are of each side. The legend asks on every move of the pointer. */
+    counts(): TradeMarkCounts;
+    /** The trades of the mark at a point of a bar: the buys under the bar, the sells over it, the rest on it. */
+    tradesAt(time: number, y: number): ChartTrade[];
+    /** Takes the marks and the list off the chart and stops following the pointer. */
+    dispose(): void;
+    _paint(): void;
+    _showTip(param: TradeMarksCrosshairParam): void;
+    _createTip(): HTMLElement;
 }
 
 // Public API module: core/chart-api.d.ts

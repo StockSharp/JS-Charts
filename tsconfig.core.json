@@ -6,6 +6,7 @@
   "include": [
     "src/index.ts",
     "src/chart/ui.ts",
+    "src/chart/legend.ts",
     "src/chart/indicators/index.ts",
     "src/core/**/*.ts",
     "src/series-spacing.ts"

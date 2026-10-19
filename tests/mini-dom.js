@@ -105,6 +105,8 @@ function createElement(document, tagName) {
         // floating element inside the viewport, and honest about knowing no geometry.
         offsetWidth: 0,
         offsetHeight: 0,
+        clientWidth: 0,
+        clientHeight: 0,
         dataset: makeDataset(attributes),
 
         getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
@@ -123,6 +125,11 @@ function createElement(document, tagName) {
             return child;
         },
         append(...nodes) { for (const node of nodes) element.appendChild(node); },
+        replaceChildren(...nodes) {
+            for (const child of element.childNodes) child.parentElement = null;
+            element.childNodes = [];
+            for (const node of nodes) element.appendChild(node);
+        },
         removeChild(child) {
             const at = element.childNodes.indexOf(child);
             if (at >= 0) element.childNodes.splice(at, 1);

@@ -49,6 +49,10 @@
       "import": "./dist/esm/chart/ui.js"
     },
     "./ui.css": "./styles/chart-ui.css",
+    "./legend": {
+      "types": "./dist/types/chart/legend.d.ts",
+      "import": "./dist/esm/chart/legend.js"
+    },
     "./indicators": {
       "types": "./dist/types/chart/indicators/index.d.ts",
       "import": "./dist/esm/chart/indicators/index.js"

@@ -1,6 +1,7 @@
 /* Looks for every element the @stocksharp/chart UI layer renders: the legend and
  * its chart-type menu, the sub-pane headers, the right-click menu, the indicator
- * picker and editor, the plain modal shell and the toast.
+ * picker and editor, the list of a trade mark's trades, the plain modal shell and
+ * the toast.
  *
  * The modules emit class names and nothing else. This file is the other half of
  * that bargain, and shipping it is what lets those modules render on a page that
@@ -21,6 +22,9 @@
  *   .legend-remove-btn - `pointer-events`. The legend swallows the pointer so the
  *     crosshair stops moving while the reader aims at a row's buttons.
  *   .chart-panes-wrapper - `position: relative`. The legend is absolute against it.
+ *   .chart-trade-tip - `position`, `pointer-events` and the `[hidden]` rule. The
+ *     list is placed beside the pointer in the coordinates of the element the trade
+ *     marks were given, and lets the pointer through so the crosshair keeps moving.
  *   .chart-ctx-menu, .chart-legend-floating-ct-menu - `position` and the offsets.
  *     Both are placed in viewport coordinates by their module, from a measured
  *     click, and both are appended to the fullscreen element when one is active.
@@ -297,6 +301,34 @@
 .chart-legend .legend-down { color: var(--chart-ui-down); }
 .chart-legend .legend-vol { color: var(--chart-ui-text-dim); }
 .chart-legend .legend-time { color: var(--chart-ui-text-dim); }
+
+/* What the chart shows, ahead of the candle's prices: its instrument, say. */
+.chart-legend .legend-title {
+    color: var(--chart-ui-text-bright);
+    font-weight: 600;
+}
+
+/* The trades marked on the chart: a count for each side, in the colour of its marks. */
+.chart-legend .legend-trades {
+    display: inline-flex;
+    gap: 8px;
+}
+
+/* The page's own lines: "name value" in each line's colour, one row under the candle. */
+.chart-legend .legend-lines {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* A part the page gave nothing to takes no room. */
+.chart-legend .legend-title:empty,
+.chart-legend .legend-trades:empty,
+.chart-legend .legend-lines:empty {
+    display: none;
+}
 
 .chart-legend .legend-indicators {
     display: flex;
@@ -1300,4 +1332,28 @@
     .indicator-modal .indicator-output-row {
         grid-template-columns: minmax(105px, 1fr) minmax(135px, 1.2fr);
     }
+}
+
+/* ========== TRADE MARKS ========== */
+
+/* The trades of the mark under the pointer, beside it, in the element the marks
+   were given. It lets the pointer through: the crosshair keeps moving underneath,
+   and the list follows it. */
+.chart-trade-tip {
+    position: absolute;
+    z-index: 11;
+    padding: 6px 8px;
+    border: 1px solid var(--chart-ui-border);
+    border-radius: 4px;
+    background: var(--chart-ui-surface);
+    box-shadow: 0 4px 12px var(--chart-ui-shadow);
+    font-family: var(--chart-ui-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.chart-trade-tip[hidden] {
+    display: none;
 }

@@ -16,6 +16,7 @@ const update = process.argv.includes('--update');
 const ENTRIES = [
     { entry: 'index.d.ts', snapshot: join(root, 'tests', 'api', 'sschart.d.ts'), name: '.' },
     { entry: join('chart', 'ui.d.ts'), snapshot: join(root, 'tests', 'api', 'sschartui.d.ts'), name: './ui' },
+    { entry: join('chart', 'legend.d.ts'), snapshot: join(root, 'tests', 'api', 'sschartlegend.d.ts'), name: './legend' },
 ];
 const temp = await mkdtemp(join(tmpdir(), 'sschart-api-'));
 
