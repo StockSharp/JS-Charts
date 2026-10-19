@@ -477,6 +477,35 @@ describe('ChartDataController', () => {
         assert.equal(timeScale.listenerCount(), 0);
     });
 
+    it('keeps paging history while a view zoomed out past the first bar still reaches it', async () => {
+        // Ten bars at first, then ten earlier ones a page; the third page is the last there is.
+        let pages = 0;
+        const source = sourceDouble({
+            async getBars(request, signal) {
+                this.barsCalls.push({ request, signal });
+                if (request.to === undefined)
+                    return { bars: Array.from({ length: 10 }, (_, i) => bar(1000 + i * 10)), hasMoreBefore: true };
+                pages++;
+                return { bars: Array.from({ length: 10 }, (_, i) => bar(request.to - 100 + i * 10)), hasMoreBefore: pages < 3 };
+            },
+        });
+        // The view begins at 750, before every bar the chart holds; the bars to its left are those that open earlier.
+        const series = seriesDouble();
+        series.barsInLogicalRange = function () {
+            return { barsBefore: this.values.filter((point) => point.time < 750).length, barsAfter: 0 };
+        };
+        const { value, timeScale } = controller(source, series, { historyPrefetchThreshold: 2, autoPrefetch: true });
+        await value.setSelection({ symbol: 'AAPL', resolution: '1m' });
+
+        timeScale.setRange({ from: -30, to: 10 });
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(pages, 3, 'one move of the view, as many pages as it takes');
+        assert.equal(value.snapshot().loadedBars, 40);
+        value.dispose();
+    });
+
     it('keeps raw OHLCV bars while switching an aggregated render view', async () => {
         const source = sourceDouble({
             async getBars(request, signal) {

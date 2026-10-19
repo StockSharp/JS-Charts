@@ -439,11 +439,21 @@ export class ChartDataController<
         }
     }
 
+    // The chart says nothing when bars are laid in front of the view it keeps, so the view is read again after each
+    // page: a view zoomed out past the first bar takes pages until it holds enough bars on its left.
     private async prefetchForRange(range: LogicalRange): Promise<number> {
-        if (this.state.status !== ChartDataStatus.Ready || !this.state.hasMoreBefore) return 0;
-        const info = this.options.series.barsInLogicalRange(range);
-        if (info === null || info.barsBefore > this.historyPrefetchThreshold) return 0;
-        return this.loadMoreBefore();
+        let loaded = 0;
+
+        for (let next: LogicalRange | null = range; next !== null; next = this.options.chart.timeScale().getVisibleLogicalRange()) {
+            if (this.state.status !== ChartDataStatus.Ready || !this.state.hasMoreBefore) break;
+            const info = this.options.series.barsInLogicalRange(next);
+            if (info === null || info.barsBefore > this.historyPrefetchThreshold) break;
+            const added = await this.loadMoreBefore();
+            if (added === 0) break;
+            loaded += added;
+        }
+
+        return loaded;
     }
 
     private async loadHistory(ticket: DataRequestTicket): Promise<number> {
