@@ -102,8 +102,9 @@ page restyles by declaring the tokens rather than by overriding rules.
 
 `TradeMarks` marks executed trades on a candle series: a mark for each side of
 every bar a trade fell in, buys under the bar and sells over it, and the list of a
-mark's trades beside the pointer. The legend counts them, and names the chart and
-the lines a page draws itself:
+mark's trades beside the pointer. The legend names the trades of the bar under the
+pointer - side, volume and price, as it names a line's value there - and names the
+chart and the lines a page draws itself:
 
 ```ts
 import { createSeriesMarkers } from '@stocksharp/chart';

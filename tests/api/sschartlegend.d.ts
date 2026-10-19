@@ -2,7 +2,7 @@
 export { ChartLegend, fullscreenMenuLayer, } from './chart-legend.js';
 export type { ChartLegendOptions, LegendBar, LegendChart, LegendChartType, LegendCrosshairParam, LegendIndicatorEngine, LegendIndicatorValue, LegendLine, LegendMenuLayer, LegendPaneHost, LegendSeriesData, LegendTradeMarks, } from './chart-legend.js';
 export { TradeMarks, barOf, describeTrade, groupTradesByBar, tradeMarkers, } from './trade-marks.js';
-export type { ChartTrade, TradeMarkColors, TradeMarkCounts, TradeMarksBar, TradeMarksChart, TradeMarksCrosshairParam, TradeMarksOptions, TradeMarksPlugin, TradeMarksSeries, } from './trade-marks.js';
+export type { ChartTrade, TradeMarkColors, TradeMarksBar, TradeMarksChart, TradeMarksCrosshairParam, TradeMarksOptions, TradeMarksPlugin, TradeMarksSeries, } from './trade-marks.js';
 export { consoleNotify, createTranslate, defaultChartFormatters, identityTranslate, standaloneHost, } from './chart-host.js';
 export type { ChartFormatters, ChartUiHost, NotificationKind, Notify, Translate, } from './chart-host.js';
 
@@ -34,6 +34,7 @@ export declare function createPlainModalController(root: HTMLElement): ModalCont
 
 // Public API module: chart/chart-legend.d.ts
 import type { ChartUiHost } from './chart-host.js';
+import type { ChartTrade } from './trade-marks.js';
 /**
  * A bar as the legend reads it. Every price field is optional on purpose: the crosshair
  * payload carries one entry per series, and a line/histogram/whitespace point has no OHLC —
@@ -91,13 +92,10 @@ export interface LegendLine {
     /** The value at the bar that opens at `time`, or undefined where the line has none. */
     valueAt(time: number): number | undefined;
 }
-/** The trades marked on the chart, as the legend counts them; `TradeMarks` is one. */
+/** The trades marked on the chart, as the legend names them at a bar; `TradeMarks` is one. */
 export interface LegendTradeMarks {
-    counts(): {
-        buy: number;
-        sell: number;
-        unknown: number;
-    };
+    /** The trades marked on the bar that opens at `time`; none where it has none. */
+    barTrades(time: number): readonly ChartTrade[];
     colors(): {
         buy: string;
         sell: string;
@@ -212,8 +210,9 @@ export declare class ChartLegend {
     /** Hands the legend the lines it names beside the candle, in the order they are listed. */
     setLines(lines: readonly LegendLine[]): void;
     /**
-     * Counts the trades marked on the chart in the strip, each side in the colour of its marks; null counts none.
-     * Marks that were handed other trades are counted again on the next paint, or at once by `refresh()`.
+     * Names the trades marked on the bar under the pointer in a row of their own, each side in the colour of its marks;
+     * null takes the row away. Marks that were handed other trades are read again on the next paint, or at once by
+     * `refresh()`.
      */
     setTradeMarks(marks: LegendTradeMarks | null): void;
     /** Points the legend at the indicator engine whose values it prints. */
@@ -221,8 +220,11 @@ export declare class ChartLegend {
     refresh(): void;
     _onCrosshairMove(param: LegendCrosshairParam): void;
     _renderOHLCV(candle: LegendBar): void;
-    /** The trades marked on the chart, one count for each side that has any, in the colour of its marks. */
-    _paintTrades(el: HTMLElement): void;
+    /**
+     * The trades marked on the bar: an entry for each side that has any, in the colour of its marks, naming the volume
+     * and the price - for a side with several trades on the bar, how many, their volume and its average price.
+     */
+    _renderTrades(time: number | null): void;
     /** The page's own lines at the bar: a row of "name value" in each line's colour, built once per set of lines. */
     _renderLines(time: number | null | undefined): void;
     /**
@@ -281,12 +283,6 @@ export interface TradeMarkColors {
     buy: string;
     sell: string;
     unknown: string;
-}
-/** How many of the marked trades are of each side. */
-export interface TradeMarkCounts {
-    buy: number;
-    sell: number;
-    unknown: number;
 }
 /** A bar as the marks read it: when it opens, and how far it reaches, which is where its marks sit. */
 export interface TradeMarksBar {
@@ -351,7 +347,6 @@ export declare class TradeMarks {
     readonly _host: ChartUiHost;
     _colors: TradeMarkColors;
     _groups: Map<number, ChartTrade[]>;
-    _counts: TradeMarkCounts;
     _bars: Map<number, TradeMarksBar>;
     _tip: HTMLElement | null;
     _onCrosshair: ((param: TradeMarksCrosshairParam) => void) | null;
@@ -362,8 +357,8 @@ export declare class TradeMarks {
     setColors(colors: TradeMarkColors): void;
     /** The colours the marks are drawn in. */
     colors(): TradeMarkColors;
-    /** How many of the marked trades are of each side. The legend asks on every move of the pointer. */
-    counts(): TradeMarkCounts;
+    /** The trades marked on the bar that opens at `time`, in the order they were handed over; none where it has none. */
+    barTrades(time: number): readonly ChartTrade[];
     /** The trades of the mark at a point of a bar: the buys under the bar, the sells over it, the rest on it. */
     tradesAt(time: number, y: number): ChartTrade[];
     /** Takes the marks and the list off the chart and stops following the pointer. */

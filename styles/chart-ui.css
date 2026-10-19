@@ -308,10 +308,19 @@
     font-weight: 600;
 }
 
-/* The trades marked on the chart: a count for each side, in the colour of its marks. */
+/* The trades marked on the bar under the pointer, a side in the colour of its marks. The row keeps its line on a bar
+   without trades, so the rows under it do not jump as the pointer moves. */
 .chart-legend .legend-trades {
-    display: inline-flex;
-    gap: 8px;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    min-height: 1lh;
+    font-variant-numeric: tabular-nums;
+}
+
+.chart-legend .legend-trades[hidden] {
+    display: none;
 }
 
 /* The page's own lines: "name value" in each line's colour, one row under the candle. */
@@ -325,7 +334,6 @@
 
 /* A part the page gave nothing to takes no room. */
 .chart-legend .legend-title:empty,
-.chart-legend .legend-trades:empty,
 .chart-legend .legend-lines:empty {
     display: none;
 }

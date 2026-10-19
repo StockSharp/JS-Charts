@@ -25,13 +25,6 @@ export interface TradeMarkColors {
     unknown: string;
 }
 
-/** How many of the marked trades are of each side. */
-export interface TradeMarkCounts {
-    buy: number;
-    sell: number;
-    unknown: number;
-}
-
 /** A bar as the marks read it: when it opens, and how far it reaches, which is where its marks sit. */
 export interface TradeMarksBar {
     time: number;
@@ -173,7 +166,6 @@ export class TradeMarks {
     readonly _host: ChartUiHost;
     _colors: TradeMarkColors;
     _groups: Map<number, ChartTrade[]> = new Map();
-    _counts: TradeMarkCounts = { buy: 0, sell: 0, unknown: 0 };
     _bars: Map<number, TradeMarksBar> = new Map();
     _tip: HTMLElement | null = null;
     _onCrosshair: ((param: TradeMarksCrosshairParam) => void) | null;
@@ -195,16 +187,6 @@ export class TradeMarks {
 
         this._bars = new Map(bars.map(bar => [bar.time, bar]));
         this._groups = groupTradesByBar(trades, bars.map(bar => bar.time));
-        this._counts = { buy: 0, sell: 0, unknown: 0 };
-
-        for (const marked of this._groups.values()) {
-            for (const trade of marked) {
-                if (trade.side === 'buy') this._counts.buy++;
-                else if (trade.side === 'sell') this._counts.sell++;
-                else this._counts.unknown++;
-            }
-        }
-
         this._paint();
     }
 
@@ -219,9 +201,9 @@ export class TradeMarks {
         return this._colors;
     }
 
-    /** How many of the marked trades are of each side. The legend asks on every move of the pointer. */
-    counts(): TradeMarkCounts {
-        return this._counts;
+    /** The trades marked on the bar that opens at `time`, in the order they were handed over; none where it has none. */
+    barTrades(time: number): readonly ChartTrade[] {
+        return this._groups.get(time) ?? [];
     }
 
     /** The trades of the mark at a point of a bar: the buys under the bar, the sells over it, the rest on it. */
@@ -254,7 +236,6 @@ export class TradeMarks {
         this._tip?.remove();
         this._tip = null;
         this._groups = new Map();
-        this._counts = { buy: 0, sell: 0, unknown: 0 };
     }
 
     _paint() {

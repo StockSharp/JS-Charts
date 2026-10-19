@@ -6,6 +6,7 @@
 // `window`, so a page can mount one legend per chart tile and the two neither share an element nor
 // tear down each other's menu.
 import type { ChartUiHost } from './chart-host.js';
+import type { ChartTrade } from './trade-marks.js';
 
 /**
  * A bar as the legend reads it. Every price field is optional on purpose: the crosshair
@@ -67,9 +68,10 @@ export interface LegendLine {
     valueAt(time: number): number | undefined;
 }
 
-/** The trades marked on the chart, as the legend counts them; `TradeMarks` is one. */
+/** The trades marked on the chart, as the legend names them at a bar; `TradeMarks` is one. */
 export interface LegendTradeMarks {
-    counts(): { buy: number; sell: number; unknown: number };
+    /** The trades marked on the bar that opens at `time`; none where it has none. */
+    barTrades(time: number): readonly ChartTrade[];
     colors(): { buy: string; sell: string; unknown: string };
 }
 
@@ -298,8 +300,9 @@ export class ChartLegend {
     }
 
     /**
-     * Counts the trades marked on the chart in the strip, each side in the colour of its marks; null counts none.
-     * Marks that were handed other trades are counted again on the next paint, or at once by `refresh()`.
+     * Names the trades marked on the bar under the pointer in a row of their own, each side in the colour of its marks;
+     * null takes the row away. Marks that were handed other trades are read again on the next paint, or at once by
+     * `refresh()`.
      */
     setTradeMarks(marks: LegendTradeMarks | null) {
         this._tradeMarks = marks;
@@ -334,20 +337,22 @@ export class ChartLegend {
         if (this._rawCandles.length > 0) {
             const last = this._rawCandles[this._rawCandles.length - 1];
             this._renderOHLCV(last);
+            this._renderTrades(last.time);
             this._renderLines(last.time);
             this._renderIndicators(last.time);
         } else {
             // No candles yet — still put the .legend-indicators span in place
             // so _renderIndicators has something to fill when indicators arrive.
             if (!this._container.querySelector('.legend-indicators')) {
-                this._container.innerHTML = '<span class="legend-ohlcv"></span><span class="legend-lines"></span>'
-                    + '<span class="legend-indicators"></span>';
+                this._container.innerHTML = '<span class="legend-ohlcv"></span><span class="legend-trades"></span>'
+                    + '<span class="legend-lines"></span><span class="legend-indicators"></span>';
                 // The caches describe nodes that were just thrown away; left standing, they let
                 // the next paint decide nothing needs rebuilding and the legend stays blank.
                 this._stripHasVolume = null;
                 this._lastIndSignature = null;
                 this._lastLinesSignature = null;
             }
+            this._renderTrades(null);
             this._renderLines(null);
             this._renderIndicators(0);
         }
@@ -361,6 +366,7 @@ export class ChartLegend {
             if (this._rawCandles.length > 0) {
                 const last = this._rawCandles[this._rawCandles.length - 1];
                 this._renderOHLCV(last);
+                this._renderTrades(last.time);
                 this._renderLines(last.time);
                 this._renderIndicators(last.time);
             }
@@ -386,6 +392,7 @@ export class ChartLegend {
         if (candle) {
             this._renderOHLCV(candle);
         }
+        this._renderTrades(time);
         this._renderLines(time);
         this._renderIndicators(time, param.seriesData);
     }
@@ -416,7 +423,6 @@ export class ChartLegend {
             }
             if (this._hasVolume)
                 html += '<span class="legend-item">V <span class="legend-vol" data-ohlc="v"></span></span>';
-            html += '<span class="legend-item legend-trades" data-ohlc="trades"></span>';
             // Per-pane chart-type selector: only the toggle button lives in the legend, the menu
             // itself is built in the menu layer on click, or a refresh would throw away a menu the
             // user has open.
@@ -432,7 +438,7 @@ export class ChartLegend {
             if (this._container.querySelector('.legend-indicators') !== null && strip !== null) {
                 strip.innerHTML = html;
             } else {
-                this._container.innerHTML = `<span class="legend-ohlcv">${html}</span>`
+                this._container.innerHTML = `<span class="legend-ohlcv">${html}</span><span class="legend-trades"></span>`
                     + '<span class="legend-lines"></span><span class="legend-indicators"></span>';
                 strip = this._container.querySelector('.legend-ohlcv') as HTMLElement | null;
                 // The indicator and line rows went with it, so the next paint has to rebuild them
@@ -462,9 +468,6 @@ export class ChartLegend {
             write('v', volume === undefined ? '--' : formatters.volume(volume), false);
         }
 
-        const trades = strip.querySelector('[data-ohlc="trades"]') as HTMLElement | null;
-        if (trades !== null) this._paintTrades(trades);
-
         const toggle = strip.querySelector('.legend-ct-toggle') as HTMLElement | null;
         if (toggle !== null) {
             toggle.title = this._host.translate('Chart');
@@ -474,29 +477,54 @@ export class ChartLegend {
         }
     }
 
-    /** The trades marked on the chart, one count for each side that has any, in the colour of its marks. */
-    _paintTrades(el: HTMLElement) {
+    /**
+     * The trades marked on the bar: an entry for each side that has any, in the colour of its marks, naming the volume
+     * and the price - for a side with several trades on the bar, how many, their volume and its average price.
+     */
+    _renderTrades(time: number | null) {
+        if (this._isDisposed) return;
+
+        const row = this._container.querySelector('.legend-trades') as HTMLElement | null;
+        if (row === null) return;
+
         const marks = this._tradeMarks;
 
-        if (marks === null) {
-            el.replaceChildren();
+        // The row keeps its line while the chart has marks, so the rows under it stay put as the pointer crosses bars
+        // without trades.
+        row.hidden = marks === null;
+
+        if (marks === null || time === null) {
+            row.replaceChildren();
             return;
         }
 
-        const counts = marks.counts();
+        const trades = marks.barTrades(time);
         const colors = marks.colors();
+        const { formatters } = this._host;
         const sides = [
-            { count: counts.buy, symbol: '▲', word: this._host.translate('Buy'), color: colors.buy },
-            { count: counts.sell, symbol: '▼', word: this._host.translate('Sell'), color: colors.sell },
-            { count: counts.unknown, symbol: '●', word: this._host.translate('Trade'), color: colors.unknown },
+            { side: 'buy', symbol: '▲', word: this._host.translate('Buy'), color: colors.buy },
+            { side: 'sell', symbol: '▼', word: this._host.translate('Sell'), color: colors.sell },
+            { side: null, symbol: '●', word: this._host.translate('Trade'), color: colors.unknown },
         ];
 
-        el.replaceChildren(...sides.filter(side => side.count > 0).map(side => {
-            const count = document.createElement('span');
-            count.className = 'legend-trades-side';
-            count.style.color = side.color;
-            count.textContent = `${side.symbol} ${side.word} ${side.count}`;
-            return count;
+        row.replaceChildren(...sides.flatMap(({ side, symbol, word, color }) => {
+            const ofSide = trades.filter(trade => trade.side === side);
+
+            if (ofSide.length === 0)
+                return [];
+
+            const volume = ofSide.reduce((sum, trade) => sum + trade.volume, 0);
+            // Weighed by volume; trades that carry none count alike.
+            const price = volume > 0
+                ? ofSide.reduce((sum, trade) => sum + trade.price * trade.volume, 0) / volume
+                : ofSide.reduce((sum, trade) => sum + trade.price, 0) / ofSide.length;
+            const count = ofSide.length > 1 ? ` ×${ofSide.length}` : '';
+
+            const entry = document.createElement('span');
+            entry.className = 'legend-trades-side';
+            entry.style.color = color;
+            entry.textContent = `${symbol} ${word}${count} ${formatters.volume(volume)} @ ${formatters.price(price)}`;
+            return [entry];
         }));
     }
 

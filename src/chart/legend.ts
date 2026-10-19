@@ -33,7 +33,6 @@ export {
 export type {
     ChartTrade,
     TradeMarkColors,
-    TradeMarkCounts,
     TradeMarksBar,
     TradeMarksChart,
     TradeMarksCrosshairParam,

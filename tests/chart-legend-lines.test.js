@@ -109,27 +109,67 @@ describe('the lines the page draws itself', () => {
 });
 
 describe('the trades marked on the chart', () => {
+    // A buy and a sell on the first bar, two buys on the second.
+    const byBar = new Map([
+        [100, [{ time: 110, side: 'buy', price: 10, volume: 1 }, { time: 120, side: 'sell', price: 12, volume: 2 }]],
+        [160, [{ time: 170, side: 'buy', price: 10, volume: 1 }, { time: 180, side: 'buy', price: 13, volume: 2 }]],
+    ]);
     const marks = {
-        counts: () => ({ buy: 2, sell: 1, unknown: 0 }),
+        barTrades: (time) => byBar.get(time) ?? [],
         colors: () => ({ buy: '#0af', sell: '#f80', unknown: '#888' }),
     };
 
-    it('are counted for each side that has any, in the colour of its marks', () => {
-        const { legend, container } = mountLegend();
+    const entries = (container) => container.querySelector('.legend-trades').childNodes;
 
+    it('are named at the bar under the pointer with their volume and price, each side in the colour of its marks', () => {
+        const { legend, chart, container } = mountLegend();
         legend.setTradeMarks(marks);
 
-        const sides = container.querySelector('[data-ohlc="trades"]').childNodes;
-        assert.deepEqual(sides.map((side) => side.textContent), ['▲ BUY 2', '▼ SELL 1']);
-        assert.deepEqual(sides.map((side) => side.style.color), ['#0af', '#f80']);
+        chart.move({ time: 100, point: { x: 1, y: 1 } });
+
+        assert.deepEqual(entries(container).map((entry) => entry.textContent), ['▲ BUY V<1> @ P<10.00>', '▼ SELL V<2> @ P<12.00>']);
+        assert.deepEqual(entries(container).map((entry) => entry.style.color), ['#0af', '#f80']);
     });
 
-    it('are counted no more once the page takes the marks away', () => {
+    it('say how many trades a side has on the bar, their volume and its average price', () => {
+        const { legend, chart, container } = mountLegend();
+        legend.setTradeMarks(marks);
+
+        chart.move({ time: 160, point: { x: 1, y: 1 } });
+
+        assert.deepEqual(entries(container).map((entry) => entry.textContent), ['▲ BUY ×2 V<3> @ P<12.00>']);
+    });
+
+    it('follow the pointer to a bar without trades, keeping their row', () => {
+        const { legend, chart, container } = mountLegend();
+        legend.setTradeMarks({ barTrades: (time) => (time === 100 ? byBar.get(100) : []), colors: marks.colors });
+
+        chart.move({ time: 100, point: { x: 1, y: 1 } });
+        chart.move({ time: 160, point: { x: 1, y: 1 } });
+
+        const row = container.querySelector('.legend-trades');
+        assert.equal(row.childNodes.length, 0);
+        assert.equal(row.hidden, false, 'the row keeps its line, so the rows under it do not jump');
+    });
+
+    it('are those of the newest bar while the pointer is off the chart', () => {
+        const { legend, chart, container } = mountLegend();
+        legend.setTradeMarks(marks);
+
+        chart.move({ time: 100, point: { x: 1, y: 1 } });
+        chart.move({ time: null, point: null });
+
+        assert.deepEqual(entries(container).map((entry) => entry.textContent), ['▲ BUY ×2 V<3> @ P<12.00>']);
+    });
+
+    it('take their row away once the page takes the marks away', () => {
         const { legend, container } = mountLegend();
         legend.setTradeMarks(marks);
 
         legend.setTradeMarks(null);
 
-        assert.equal(container.querySelector('[data-ohlc="trades"]').textContent, '');
+        const row = container.querySelector('.legend-trades');
+        assert.equal(row.childNodes.length, 0);
+        assert.equal(row.hidden, true);
     });
 });

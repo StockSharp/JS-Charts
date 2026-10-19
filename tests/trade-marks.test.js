@@ -123,13 +123,15 @@ describe('what a mark says', () => {
 });
 
 describe('trades marked on a chart', () => {
-    it('paints a mark for each side of each bar and counts the trades it marked', () => {
+    it('paints a mark for each side of each bar and tells the trades it marked on a bar', () => {
         const { markers, marks } = mount();
 
         marks.setTrades([trade(110, 'buy', 100), trade(120, 'sell', 105), trade(170, 'buy', 101), trade(50, 'buy', 99)]);
 
         assert.equal(markers.painted.length, 3);
-        assert.deepEqual(marks.counts(), { buy: 2, sell: 1, unknown: 0 });
+        assert.deepEqual(marks.barTrades(100).map((marked) => marked.time), [110, 120]);
+        assert.deepEqual(marks.barTrades(160).map((marked) => marked.time), [170]);
+        assert.deepEqual(marks.barTrades(130), [], 'no bar opens then');
     });
 
     it('lists the sells of a bar while the pointer is over the bar', () => {

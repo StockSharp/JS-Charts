@@ -46,8 +46,8 @@ export type {
     LegendTradeMarks,
 } from './chart-legend.js';
 
-// Executed trades on the candles: the marks and the list of a mark's trades under the pointer. The legend counts
-// them through `setTradeMarks`.
+// Executed trades on the candles: the marks and the list of a mark's trades under the pointer. The legend names the
+// trades of the bar under the pointer through `setTradeMarks`.
 export {
     TradeMarks,
     barOf,
@@ -59,7 +59,6 @@ export {
 export type {
     ChartTrade,
     TradeMarkColors,
-    TradeMarkCounts,
     TradeMarksBar,
     TradeMarksChart,
     TradeMarksCrosshairParam,
