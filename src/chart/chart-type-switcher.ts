@@ -29,6 +29,11 @@ export interface ChartTypeSwitcherCandle extends OhlcData {
     levels?: unknown;
 }
 
+const ohlcOf = (bar: ChartTypeSwitcherCandle): OhlcData =>
+    ({ time: bar.time, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+
+const closeOf = (bar: ChartTypeSwitcherCandle): LineData => ({ time: bar.time, value: bar.close });
+
 /** How the source bars are drawn. */
 export const ChartType = {
     Candle: 'candle',
@@ -166,11 +171,58 @@ export class ChartTypeSwitcher {
     }
 
     /**
-     * The bars every type is drawn from. The array is held by reference, so a page that mutates
-     * its live window in place gets the current window on the next switch without saying so again.
+     * The bars every type is drawn from, drawn at once as the type being drawn. The array is held
+     * by reference, so a page that mutates its live window in place gets the current window on the
+     * next switch without saying so again. A page handing another window - another instrument or
+     * timeframe, earlier bars in front - has it drawn, and Heikin-Ashi, Renko and P&F start their
+     * running state over from it rather than from the bars it replaced.
      */
     setRawCandles(candles: readonly ChartTypeSwitcherCandle[]) {
         this._rawCandles = candles;
+        this._redraw();
+    }
+
+    /** Draw the source bars on the current series as the type it draws. */
+    _redraw() {
+        const bars = this._rawCandles;
+        switch (this._currentType) {
+            case ChartType.Candle:
+            case ChartType.Bar:
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData(bars.map(ohlcOf));
+                break;
+
+            case ChartType.Line:
+            case ChartType.Area:
+                (this._currentSeries as ISeriesApi<LineData>).setData(bars.map(closeOf));
+                break;
+
+            case ChartType.HeikinAshi:
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData(this._computeHeikinAshi(bars));
+                break;
+
+            case ChartType.Renko: {
+                // Reset in place: whoever holds the runtime's bars for indicators sees the new ones.
+                const runtime = this._derivedRuntime instanceof RenkoDataRuntime ? this._derivedRuntime : new RenkoDataRuntime();
+                runtime.reset(bars);
+                this._derivedRuntime = runtime;
+                // A series derives its points again on a new box size; sized for these bars over the ones they
+                // replace, that could run without end, so it goes on an emptied series.
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData([]);
+                this._currentSeries.applyOptions({ boxSize: runtime.boxSize } as Partial<SeriesOptions>);
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData(bars.map(ohlcOf));
+                break;
+            }
+
+            case ChartType.PointFigure: {
+                const runtime = this._derivedRuntime instanceof PointFigureDataRuntime ? this._derivedRuntime : new PointFigureDataRuntime();
+                runtime.reset(bars);
+                this._derivedRuntime = runtime;
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData([]);
+                this._currentSeries.applyOptions({ boxSize: runtime.boxSize, reversal: runtime.reversal } as Partial<SeriesOptions>);
+                (this._currentSeries as ISeriesApi<CandlestickData>).setData(bars.map(ohlcOf));
+                break;
+            }
+        }
     }
 
     /**
@@ -193,8 +245,8 @@ export class ChartTypeSwitcher {
         try { this._chart.removeSeries(this._currentSeries); } catch { /* already detached */ }
 
         const bars = this._rawCandles;
-        const ohlc = () => bars.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
-        const closes = () => bars.map(c => ({ time: c.time, value: c.close }));
+        const ohlc = () => bars.map(ohlcOf);
+        const closes = () => bars.map(closeOf);
         const palette = this._palette;
         const candleColors: Partial<SeriesOptions> = {
             upColor: palette.up,

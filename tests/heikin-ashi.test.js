@@ -116,3 +116,54 @@ describe('Heikin-Ashi live update', () => {
         );
     });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Bars handed afresh - another instrument or timeframe - are what Heikin-Ashi is drawn from now
+// ---------------------------------------------------------------------------------------------
+
+describe('Heikin-Ashi over bars handed afresh', () => {
+    function haSwitcher(bars) {
+        const switcher = new ChartTypeSwitcher({
+            chart: chartMock(),
+            series: seriesMock(),
+            initialType: ChartType.Candle,
+            availableTypes: allChartTypes,
+            palette: defaultChartTypePalette,
+            host: standaloneHost,
+        });
+        switcher.setRawCandles(bars);
+        return { switcher, haSeries: switcher.switchType(ChartType.HeikinAshi) };
+    }
+
+    const first = [
+        { time: 100, open: 2400, high: 2410, low: 2390, close: 2405 },
+        { time: 200, open: 2405, high: 2420, low: 2400, close: 2415 },
+    ];
+
+    it('draws them, and the next live bar opens from them rather than from the bars they replaced', () => {
+        const { switcher, haSeries } = haSwitcher(first);
+        const next = [
+            { time: 100, open: 82000, high: 82100, low: 81900, close: 82050 },
+            { time: 200, open: 82050, high: 82200, low: 82000, close: 82150 },
+        ];
+
+        switcher.setRawCandles(next);
+        assert.deepEqual(haSeries.data, canonicalHeikinAshi(next), 'the series still drew the bars that were replaced');
+
+        const tick = { time: 300, open: 82150, high: 82160, low: 82140, close: 82155 };
+        switcher.updatePrice(tick);
+        assert.deepEqual(haSeries.updates[haSeries.updates.length - 1], canonicalHeikinAshi([...next, tick]).pop(),
+            'the live bar opened from the bars that were replaced');
+    });
+
+    it('starts the next live bar from itself when it is handed no bars', () => {
+        const { switcher, haSeries } = haSwitcher(first);
+
+        switcher.setRawCandles([]);
+        assert.deepEqual(haSeries.data, []);
+
+        const tick = { time: 300, open: 82150, high: 82160, low: 82140, close: 82155 };
+        switcher.updatePrice(tick);
+        assert.deepEqual(haSeries.updates[haSeries.updates.length - 1], canonicalHeikinAshi([tick]).pop());
+    });
+});

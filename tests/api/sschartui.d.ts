@@ -544,10 +544,15 @@ export declare class ChartTypeSwitcher {
     _liveHeikin: HeikinAshiBar | null;
     constructor(options: ChartTypeSwitcherOptions);
     /**
-     * The bars every type is drawn from. The array is held by reference, so a page that mutates
-     * its live window in place gets the current window on the next switch without saying so again.
+     * The bars every type is drawn from, drawn at once as the type being drawn. The array is held
+     * by reference, so a page that mutates its live window in place gets the current window on the
+     * next switch without saying so again. A page handing another window - another instrument or
+     * timeframe, earlier bars in front - has it drawn, and Heikin-Ashi, Renko and P&F start their
+     * running state over from it rather than from the bars it replaced.
      */
     setRawCandles(candles: readonly ChartTypeSwitcherCandle[]): void;
+    /** Draw the source bars on the current series as the type it draws. */
+    _redraw(): void;
     /**
      * Draw the source bars as `type` and hand back the series that draws them now, which is the
      * current one when the type is already drawn or is not among the ones this page offers.

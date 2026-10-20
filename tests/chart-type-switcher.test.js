@@ -21,6 +21,10 @@ function seriesMock(definition = null, options = {}) {
         // The switcher carries the outgoing series' priceFormat onto the one it creates, so a
         // stand-in has to answer for its options the way a real series does.
         options() { return options; },
+        applyOptions(patch) {
+            this.optionedOver = (this.optionedOver || []).concat(this.data.length);
+            Object.assign(options, patch);
+        },
         setData(data) { this.data = [...data]; },
         update(point) { this.updates.push(point); },
     };
@@ -141,5 +145,48 @@ describe('ChartTypeSwitcher', () => {
         assert.deepEqual(messages, [
             { message: 'Chart type renko is not available.', kind: 'warning' },
         ]);
+    });
+
+    // A page hands new bars when it moves to another instrument or timeframe, or loads earlier
+    // ones; the type being drawn is drawn from those, not left showing the bars they replaced.
+    it('draws the bars it is handed as the type being drawn', () => {
+        const switcher = switcherOn(chartMock());
+        switcher.setRawCandles([candle(100, 10), candle(200, 12)]);
+        const line = switcher.switchType(ChartType.Line);
+
+        switcher.setRawCandles([candle(100, 82000), candle(200, 82100)]);
+
+        assert.deepEqual(line.data, [{ time: 100, value: 82000 }, { time: 200, value: 82100 }]);
+    });
+
+    it('sizes Renko bricks and indicator bars by the bars it is handed', () => {
+        const switcher = switcherOn(chartMock());
+        switcher.setRawCandles([candle(100, 10), candle(200, 12), candle(300, 14), candle(400, 16)]);
+        const renko = switcher.switchType(ChartType.Renko);
+        const smallBox = renko.options().boxSize;
+
+        const next = [candle(100, 82000), candle(200, 82400), candle(300, 82800), candle(400, 83200)];
+        switcher.setRawCandles(next);
+
+        assert.ok(renko.options().boxSize > smallBox * 100, 'the bricks kept the size of the bars that were replaced');
+        assert.ok(switcher.getIndicatorCandles().length > 0
+            && switcher.getIndicatorCandles().every(bar => bar.close > 80000),
+            'indicators ran over the bricks of the bars that were replaced');
+        assert.deepEqual(renko.data.map(bar => bar.close), next.map(bar => bar.close));
+    });
+
+    // A series derives the points it holds again when its box size changes, and a box sized for one instrument's prices
+    // over another's bars can make that run without end, so the new size goes on an emptied series.
+    it('takes the box size of the bars it is handed only over an emptied series', () => {
+        for (const type of [ChartType.Renko, ChartType.PointFigure]) {
+            const switcher = switcherOn(chartMock());
+            switcher.setRawCandles([candle(100, 82000), candle(200, 82400), candle(300, 82800), candle(400, 83200)]);
+            const series = switcher.switchType(type);
+
+            switcher.setRawCandles([candle(100, 0.00001), candle(200, 0.000012), candle(300, 0.000014), candle(400, 0.000016)]);
+
+            assert.deepEqual(series.optionedOver, [0], `${type}: the new box size was applied over the bars it replaced`);
+            assert.equal(series.data.length, 4);
+        }
     });
 });
