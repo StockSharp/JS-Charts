@@ -352,6 +352,7 @@ export class ChartLegend {
                 this._lastIndSignature = null;
                 this._lastLinesSignature = null;
             }
+            this._clearOHLCV();
             this._renderTrades(null);
             this._renderLines(null);
             this._renderIndicators(0);
@@ -395,6 +396,17 @@ export class ChartLegend {
         this._renderTrades(time);
         this._renderLines(time);
         this._renderIndicators(time, param.seriesData);
+    }
+
+    // No bar to price: the strip keeps its title and its chart-type toggle and words nothing else, rather than the bar
+    // of whatever the chart held before.
+    _clearOHLCV() {
+        const strip = this._container.querySelector('.legend-ohlcv') as HTMLElement | null;
+        if (strip === null) return;
+        for (const key of ['time', 'o', 'h', 'l', 'c', 'v']) {
+            const el = strip.querySelector(`[data-ohlc="${key}"]`) as HTMLElement | null;
+            if (el !== null) el.textContent = '';
+        }
     }
 
     _renderOHLCV(candle: LegendBar) {

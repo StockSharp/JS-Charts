@@ -384,3 +384,16 @@ describe('sub-pane rows are named only when the pane label cannot name them', ()
         );
     });
 });
+
+describe('legend over a chart with no bars', () => {
+    it('empties the price strip when the chart is handed no bars, and keeps the chart-type toggle', () => {
+        const legend = mountLegend([bar(1700000000, 100)]);
+        const strip = () => legend._container.querySelector('.legend-ohlcv');
+        assert.match(strip().textContent, /P<100\.00>/, 'control: the strip prices the bar it was handed');
+
+        legend.setRawCandles([]);
+
+        assert.doesNotMatch(strip().textContent, /[PTV]</, 'the strip still words a bar the chart no longer holds');
+        assert.ok(strip().querySelector('.legend-ct-toggle'), 'the chart-type toggle went with the prices');
+    });
+});

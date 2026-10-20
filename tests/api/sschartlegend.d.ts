@@ -219,6 +219,7 @@ export declare class ChartLegend {
     setIndicatorEngine(engine: LegendIndicatorEngine | null): void;
     refresh(): void;
     _onCrosshairMove(param: LegendCrosshairParam): void;
+    _clearOHLCV(): void;
     _renderOHLCV(candle: LegendBar): void;
     /**
      * The trades marked on the bar: an entry for each side that has any, in the colour of its marks, naming the volume
